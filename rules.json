@@ -1,0 +1,15 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/src/js/SignalsmithStretch.min.js"
+      }
+    },
+    "condition": {
+      "urlFilter": "__pitch_shifter_worklet.js"
+    }
+  }
+]

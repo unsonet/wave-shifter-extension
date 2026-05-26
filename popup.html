@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { width: 260px; padding: 12px; font-family: sans-serif; background: #1e1e2f; color: #eee; }
+    .control { margin-bottom: 16px; }
+    label { display: block; margin-bottom: 6px; font-size: 13px; }
+    input[type="range"] { width: 100%; cursor: pointer; }
+    .value-display { font-size: 12px; text-align: right; margin-top: 4px; color: #aaa; }
+    button { background: #3a6ea5; border: none; color: white; padding: 6px 12px; border-radius: 6px; cursor: pointer; width: 100%; }
+    button:hover { background: #2c4d73; }
+    .row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+    .row label { margin: 0; }
+    hr { border-color: #444; margin: 16px 0; }
+  </style>
+</head>
+<body>
+  <div class="control">
+    <label>Pitch Shift (semitones): <span id="semitonesVal">0</span></label>
+    <input type="range" id="semitones" min="-12" max="12" step="1" value="0">
+  </div>
+  <div class="control">
+    <label>Pitch Fine Shifting (cents): <span id="centsVal">0</span></label>
+    <input type="range" id="cents" min="-50" max="50" step="1" value="0">
+  </div>
+  <div class="control">
+    <label>Block Size (ms): <span id="blockSizeVal">120</span></label>
+    <input type="range" id="blockSize" min="20" max="150" step="5" value="120">
+  </div>
+  <div class="row">
+    <input type="checkbox" id="smartProcessing" checked>
+    <label>Smart processing</label>
+  </div>
+
+  <hr>
+
+  <div class="control">
+    <label>Speed Shift: <span id="speedUnitsVal">100%</span></label>
+    <input type="range" id="speedUnits" min="-75" max="60" step="1" value="0">
+  </div>
+  <div class="control">
+    <label>Speed Fine Shifting: <span id="speedFineVal">100%</span></label>
+    <input type="range" id="speedFine" min="-5" max="5" step="1" value="0">
+  </div>
+  <div class="row">
+    <input type="checkbox" id="preservePitch" checked>
+    <label>Preserve Pitch</label>
+  </div>
+
+  <div class="control" style="margin-top: 16px; margin-bottom: 0px;">
+    <button id="resetBtn">Reset</button>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

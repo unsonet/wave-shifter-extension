@@ -1,0 +1,53 @@
+{
+  "manifest_version": 3,
+  "name": "Wave Shifter - key, tune, pitch, speed, tempo - all-in-one",
+  "short_name": "Wave Shifter",
+  "description": "Real-time audio pitch shifter and playback speed controller for videos and music on any website.",
+  "author": "Anton Polyakin <https://github.com/antonpolyakin>",
+  "homepage_url": "https://unsonet.onrender.com/",
+  "version": "1.0",
+  "permissions": [
+    "storage",
+    "declarativeNetRequest"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "icons": {
+    "512": "src/img/icon.png"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/js/SignalsmithStretch.min.js",
+        "page-hook.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "worklet_rules",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  }
+}
