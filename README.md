@@ -1,4 +1,4 @@
-# <img src="src/img/icon.png" width="64" alt="Extension Logo"> Wave Shifter 
+# <img src="src/img/icon-128.png" width="64" alt="Extension Logo"> Wave Shifter 
 
 Wave Shifter is a lightweight open-source browser extension that lets you change the pitch and playback speed of audio and video directly in your browser.
 

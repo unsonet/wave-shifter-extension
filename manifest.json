@@ -14,7 +14,8 @@
     "<all_urls>"
   ],
   "icons": {
-    "512": "src/img/icon.png"
+    "512": "src/img/icon-512.png",
+    "128": "src/img/icon-128.png"
   },
   "action": {
     "default_popup": "popup.html"
