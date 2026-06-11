@@ -8,6 +8,7 @@
     let pitchNode = null;
     let isNodeReady = false;
     let initPromise = null;
+    let startPromise = null;
 
     let settings = {
         pitchValueSemitones: 0,
@@ -16,11 +17,50 @@
         applySmartProcessing: true,
         speedUnits: 0,
         speedFine: 0,
-        preservePitch: true
+        preservePitch: true,
+        blacklistPatterns: []
     };
+
+    let siteIsBlacklisted = false;
 
     const connectedMediaElements = new Set();
     const connectingMediaElements = new WeakSet();
+
+    function normalizePattern(value) {
+        return String(value ?? '').trim();
+    }
+
+    function escapeRegExp(str) {
+        return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    function matchURLPatterns(url, urlPatterns) {
+        const patterns = typeof urlPatterns === 'string'
+            ? [urlPatterns]
+            : Array.isArray(urlPatterns)
+                ? urlPatterns
+                : [];
+
+        const target = String(url || '');
+
+        return patterns.some((pattern) => {
+            const normalizedPattern = normalizePattern(pattern);
+            if (!normalizedPattern) return false;
+
+            if (normalizedPattern.includes('*')) {
+                const regex = new RegExp(
+                    '^' + escapeRegExp(normalizedPattern).replace(/\\\*/g, '.*') + '$'
+                );
+                return regex.test(target);
+            }
+
+            return target === normalizedPattern;
+        });
+    }
+
+    function isBlacklisted() {
+        return matchURLPatterns(location.href, settings.blacklistPatterns || []);
+    }
 
     function applyPitchSettingsToNode(node, s) {
         if (!node || !node.port) return;
@@ -75,6 +115,28 @@
         }
     }
 
+    function resetNativePlayback(mediaEl) {
+        try {
+            mediaEl.playbackRate = 1;
+        } catch { }
+
+        try {
+            mediaEl.defaultPlaybackRate = 1;
+        } catch { }
+
+        try {
+            if ('preservesPitch' in mediaEl) {
+                mediaEl.preservesPitch = true;
+            }
+        } catch { }
+
+        try {
+            if ('webkitPreservesPitch' in mediaEl) {
+                mediaEl.webkitPreservesPitch = true;
+            }
+        } catch { }
+    }
+
     function handleRateChange(e) {
         const el = e && e.target;
         if (!el) return;
@@ -94,7 +156,6 @@
                 console.warn('[AudioContext] unlock failed', e);
             }
 
-            // удалить слушатели после успеха
             window.removeEventListener('click', unlock);
             window.removeEventListener('keydown', unlock);
             window.removeEventListener('touchstart', unlock);
@@ -105,7 +166,55 @@
         window.addEventListener('touchstart', unlock, { once: true });
     }
 
+    function disconnectNodeSafe(node) {
+        if (!node) return;
+        try {
+            node.disconnect();
+        } catch { }
+    }
+
+    function connectNodeSafe(node, target) {
+        if (!node || !target) return;
+        try {
+            node.connect(target);
+        } catch { }
+    }
+
+    function routeMediaElement(mediaEl, bypass) {
+        const source = mediaEl.__pitchSource;
+        if (!source || !audioCtx) return;
+
+        disconnectNodeSafe(source);
+
+        if (bypass) {
+            connectNodeSafe(source, audioCtx.destination);
+        } else {
+            connectNodeSafe(source, pitchNode);
+        }
+    }
+
+    function setBlacklistMode(enabled) {
+        siteIsBlacklisted = enabled;
+
+        if (!audioCtx || !pitchNode) return;
+
+        disconnectNodeSafe(pitchNode);
+
+        if (enabled) {
+            connectedMediaElements.forEach((el) => routeMediaElement(el, true));
+        } else {
+            connectNodeSafe(pitchNode, audioCtx.destination);
+            connectedMediaElements.forEach((el) => routeMediaElement(el, false));
+
+            if (isNodeReady) {
+                applyPitchSettingsToNode(pitchNode, settings);
+            }
+        }
+    }
+
     async function initPitchShifter() {
+        if (siteIsBlacklisted) return;
+
         if (audioCtx && audioCtx.state !== 'closed' && pitchNode) {
             return;
         }
@@ -154,13 +263,11 @@
 
         const url = new URL(src, location.href);
 
-        // same-origin уже ок
         if (url.origin === location.origin) return true;
 
-        // для cross-origin нужно, чтобы запрос был CORS-enabled
         if (mediaEl.crossOrigin !== 'anonymous') {
             mediaEl.crossOrigin = 'anonymous';
-            return false; // надо перезагрузить источник
+            return false;
         }
 
         return true;
@@ -168,6 +275,8 @@
 
     async function connectMediaElement(mediaEl) {
         if (!mediaEl || mediaEl.nodeType !== Node.ELEMENT_NODE) return;
+
+        if (siteIsBlacklisted) return;
 
         if (connectingMediaElements.has(mediaEl) || mediaEl.__pitchConnected) {
             applySpeedSettings(mediaEl);
@@ -177,8 +286,9 @@
         connectingMediaElements.add(mediaEl);
 
         try {
-            await initPitchShifter();
+            await bootstrap();
 
+            if (siteIsBlacklisted) return;
             if (!audioCtx || !pitchNode) return;
 
             if (audioCtx.state === 'suspended') {
@@ -198,25 +308,31 @@
                     const t = mediaEl.currentTime;
                     const wasPlaying = !mediaEl.paused;
 
-                    mediaEl.src = src; // перезапрос уже с CORS
+                    mediaEl.src = src;
                     mediaEl.addEventListener('loadedmetadata', async () => {
-                        try { mediaEl.currentTime = t; } catch { }
+                        try {
+                            mediaEl.currentTime = t;
+                        } catch { }
                         if (wasPlaying) {
-                            try { await mediaEl.play(); } catch { }
+                            try {
+                                await mediaEl.play();
+                            } catch { }
                         }
                     }, { once: true });
                 }
                 return;
             }
 
-            const source = audioCtx.createMediaElementSource(mediaEl);
-            source.connect(pitchNode);
+            if (!mediaEl.__pitchSource) {
+                const source = audioCtx.createMediaElementSource(mediaEl);
+                mediaEl.__pitchSource = source;
+                mediaEl.__pitchContext = audioCtx;
+            }
 
-            mediaEl.__pitchSource = source;
+            routeMediaElement(mediaEl, siteIsBlacklisted);
+
             mediaEl.__pitchNode = pitchNode;
-            mediaEl.__pitchContext = audioCtx;
             mediaEl.__pitchConnected = true;
-
             connectedMediaElements.add(mediaEl);
         } catch (e) {
             mediaEl.__pitchConnected = false;
@@ -227,15 +343,61 @@
     }
 
     function connectAllMedia() {
+        if (siteIsBlacklisted) return;
         document.querySelectorAll('audio, video').forEach(connectMediaElement);
     }
 
-    window.addEventListener('message', (e) => {
+    async function bootstrap() {
+        if (siteIsBlacklisted) return;
+
+        if (startPromise) {
+            return startPromise;
+        }
+
+        startPromise = (async () => {
+            await initPitchShifter();
+            if (!siteIsBlacklisted) {
+                connectAllMedia();
+            }
+        })().catch((err) => {
+            startPromise = null;
+            throw err;
+        });
+
+        return startPromise;
+    }
+
+    function refreshBlacklistState() {
+        const blacklisted = isBlacklisted();
+
+        if (blacklisted !== siteIsBlacklisted) {
+            setBlacklistMode(blacklisted);
+        } else {
+            siteIsBlacklisted = blacklisted;
+        }
+
+        return siteIsBlacklisted;
+    }
+
+    window.addEventListener('message', async (e) => {
         if (e.source !== window) return;
         const data = e.data;
 
         if (data && data.type === 'PITCH_UPDATE') {
             settings = data.settings || settings;
+
+            const blacklisted = isBlacklisted();
+            if (blacklisted !== siteIsBlacklisted) {
+                setBlacklistMode(blacklisted);
+            } else {
+                siteIsBlacklisted = blacklisted;
+            }
+
+            if (siteIsBlacklisted) {
+                return;
+            }
+
+            await bootstrap();
 
             if (pitchNode && isNodeReady) {
                 applyPitchSettingsToNode(pitchNode, settings);
@@ -248,6 +410,8 @@
     });
 
     const observer = new MutationObserver((mutations) => {
+        if (siteIsBlacklisted) return;
+
         for (const mut of mutations) {
             for (const node of mut.addedNodes) {
                 if (node.nodeType !== Node.ELEMENT_NODE) continue;
@@ -261,7 +425,7 @@
         }
     });
 
-    const start = () => {
+    const startObserver = () => {
         if (!document.body) return;
         observer.observe(document.body, {
             childList: true,
@@ -271,21 +435,20 @@
     };
 
     if (document.body) {
-        start();
+        startObserver();
     } else {
-        document.addEventListener('DOMContentLoaded', start);
+        document.addEventListener('DOMContentLoaded', startObserver);
     }
 
     document.addEventListener('play', (e) => {
         const el = e && e.target;
         if (el && (el.tagName === 'AUDIO' || el.tagName === 'VIDEO')) {
+            if (siteIsBlacklisted) return;
+
             if (audioCtx && audioCtx.state === 'suspended') {
                 audioCtx.resume();
             }
             connectMediaElement(el);
         }
     }, true);
-
-    initPitchShifter().catch(() => { });
-    connectAllMedia();
 })();

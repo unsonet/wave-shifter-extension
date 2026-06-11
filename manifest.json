@@ -3,9 +3,9 @@
   "name": "Wave Shifter - key, tune, pitch, speed, tempo - all-in-one",
   "short_name": "Wave Shifter",
   "description": "Real-time audio pitch shifter and playback speed controller for videos and music on any website.",
-  "author": "Anton Polyakin <https://github.com/antonpolyakin>",
+  "author": "Unsonet <https://github.com/Unsonet>",
   "homepage_url": "https://unsonet.onrender.com/",
-  "version": "1.0",
+  "version": "1.1",
   "permissions": [
     "storage",
     "declarativeNetRequest"

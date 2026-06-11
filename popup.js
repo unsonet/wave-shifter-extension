@@ -6,8 +6,72 @@
     applySmartProcessing: true,
     speedUnits: 0,
     speedFine: 0,
-    preservePitch: true
+    preservePitch: true,
+    blacklistPatterns: []
   };
+
+  const semitonesSlider = document.getElementById('semitones');
+  const centsSlider = document.getElementById('cents');
+  const blockSizeSlider = document.getElementById('blockSize');
+  const smartCheck = document.getElementById('smartProcessing');
+  const semitonesVal = document.getElementById('semitonesVal');
+  const centsVal = document.getElementById('centsVal');
+  const blockSizeVal = document.getElementById('blockSizeVal');
+
+  const speedUnitsSlider = document.getElementById('speedUnits');
+  const speedFineSlider = document.getElementById('speedFine');
+  const preservePitchCheck = document.getElementById('preservePitch');
+  const speedUnitsVal = document.getElementById('speedUnitsVal');
+  const speedFineVal = document.getElementById('speedFineVal');
+
+  const resetBtn = document.getElementById('resetBtn');
+  const blacklistBtn = document.getElementById('blacklistBtn');
+
+  const blacklistModal = document.getElementById('blacklistModal');
+  const blacklistModalClose = document.getElementById('blacklistModalClose');
+  const blacklistModalCloseBtn = document.getElementById('blacklistModalCloseBtn');
+  const blacklistInput = document.getElementById('blacklistInput');
+  const blacklistAddBtn = document.getElementById('blacklistAddBtn');
+  const blacklistList = document.getElementById('blacklistList');
+
+  const siteStatusDot = document.getElementById('siteStatusDot');
+  const siteStatusText = document.getElementById('siteStatusText');
+
+  let currentSettings = await loadSettings();
+
+  function normalizePattern(value) {
+    return String(value ?? '').trim();
+  }
+
+  function escapeRegExp(str) {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function matchURLPatterns(url, urlPatterns) {
+    const patterns = typeof urlPatterns === 'string'
+      ? [urlPatterns]
+      : Array.isArray(urlPatterns)
+        ? urlPatterns
+        : [];
+
+    const target = String(url || '');
+
+    return patterns.some((pattern) => {
+      const normalizedPattern = normalizePattern(pattern);
+      if (!normalizedPattern) return false;
+
+      // wildcard mode
+      if (normalizedPattern.includes('*')) {
+        const regex = new RegExp(
+          '^' + escapeRegExp(normalizedPattern).replace(/\\\*/g, '.*') + '$'
+        );
+        return regex.test(target);
+      }
+
+      // exact mode (root page style)
+      return target === normalizedPattern;
+    });
+  }
 
   async function sendSettings(settings) {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -27,24 +91,6 @@
       ...(result.pitchSettings || {})
     };
   }
-
-  const semitonesSlider = document.getElementById('semitones');
-  const centsSlider = document.getElementById('cents');
-  const blockSizeSlider = document.getElementById('blockSize');
-  const smartCheck = document.getElementById('smartProcessing');
-  const semitonesVal = document.getElementById('semitonesVal');
-  const centsVal = document.getElementById('centsVal');
-  const blockSizeVal = document.getElementById('blockSizeVal');
-
-  const speedUnitsSlider = document.getElementById('speedUnits');
-  const speedFineSlider = document.getElementById('speedFine');
-  const preservePitchCheck = document.getElementById('preservePitch');
-  const speedUnitsVal = document.getElementById('speedUnitsVal');
-  const speedFineVal = document.getElementById('speedFineVal');
-
-  const resetBtn = document.getElementById('resetBtn');
-
-  let currentSettings = await loadSettings();
 
   function calcSpeedPercentage(units, fine) {
     const base = units < 0 ? 100 + 1 * units : 100 + 5 * units;
@@ -71,6 +117,87 @@
   async function applySettings() {
     await saveSettings(currentSettings);
     await sendSettings(currentSettings);
+    await refreshSiteStatus();
+  }
+
+  function openBlacklistModal() {
+    renderBlacklistList();
+    blacklistModal.classList.add('open');
+    blacklistModal.setAttribute('aria-hidden', 'false');
+    blacklistInput.focus();
+  }
+
+  function closeBlacklistModal() {
+    blacklistModal.classList.remove('open');
+    blacklistModal.setAttribute('aria-hidden', 'true');
+  }
+
+  function renderBlacklistList() {
+    const patterns = Array.isArray(currentSettings.blacklistPatterns)
+      ? currentSettings.blacklistPatterns
+      : [];
+
+    blacklistList.innerHTML = '';
+
+    if (!patterns.length) {
+      const empty = document.createElement('div');
+      empty.style.opacity = '0.7';
+      empty.style.fontSize = '13px';
+      empty.textContent = 'Blacklist is empty';
+      blacklistList.appendChild(empty);
+      return;
+    }
+
+    patterns.forEach((pattern, index) => {
+      const row = document.createElement('div');
+      row.className = 'blacklist-item';
+      row.dataset.index = String(index);
+
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = pattern;
+      input.spellcheck = false;
+      input.className = 'blacklist-item-input';
+      input.title = pattern;
+
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.textContent = 'Delete';
+      del.className = 'blacklist-item-delete';
+
+      row.appendChild(input);
+      row.appendChild(del);
+      blacklistList.appendChild(row);
+    });
+  }
+
+  async function addBlacklistPattern() {
+    const pattern = normalizePattern(blacklistInput.value);
+    if (!pattern) return;
+
+    const patterns = Array.isArray(currentSettings.blacklistPatterns)
+      ? [...currentSettings.blacklistPatterns]
+      : [];
+
+    if (!patterns.includes(pattern)) {
+      patterns.push(pattern);
+      currentSettings.blacklistPatterns = patterns;
+      await applySettings();
+    }
+
+    blacklistInput.value = '';
+    renderBlacklistList();
+  }
+
+  async function refreshSiteStatus() {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const url = tab?.url || '';
+
+    const blacklisted = matchURLPatterns(url, currentSettings.blacklistPatterns || []);
+
+    siteStatusDot.classList.remove('active', 'inactive');
+    siteStatusDot.classList.add(blacklisted ? 'inactive' : 'active');
+    siteStatusText.textContent = blacklisted ? 'inactive' : 'active';
   }
 
   semitonesSlider.addEventListener('input', async (e) => {
@@ -114,10 +241,79 @@
   });
 
   resetBtn.addEventListener('click', async () => {
-    currentSettings = { ...DEFAULT_SETTINGS };
+    currentSettings = {
+      ...DEFAULT_SETTINGS,
+      blacklistPatterns: currentSettings.blacklistPatterns || []
+    };
     updateUI();
+    renderBlacklistList();
     await applySettings();
   });
 
+  blacklistBtn.addEventListener('click', openBlacklistModal);
+  blacklistModalClose.addEventListener('click', closeBlacklistModal);
+  blacklistModalCloseBtn.addEventListener('click', closeBlacklistModal);
+
+  blacklistAddBtn.addEventListener('click', addBlacklistPattern);
+
+  blacklistInput.addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      await addBlacklistPattern();
+    }
+    if (e.key === 'Escape') {
+      closeBlacklistModal();
+    }
+  });
+
+  blacklistList.addEventListener('input', async (e) => {
+    const input = e.target.closest('.blacklist-item-input');
+    if (!input) return;
+
+    const row = input.closest('.blacklist-item');
+    const index = Number(row?.dataset.index);
+    if (!Number.isFinite(index)) return;
+
+    const patterns = Array.isArray(currentSettings.blacklistPatterns)
+      ? [...currentSettings.blacklistPatterns]
+      : [];
+
+    patterns[index] = normalizePattern(input.value);
+    currentSettings.blacklistPatterns = patterns.filter(Boolean);
+    await applySettings();
+  });
+
+  blacklistList.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.blacklist-item-delete');
+    if (!btn) return;
+
+    const row = btn.closest('.blacklist-item');
+    const index = Number(row?.dataset.index);
+    if (!Number.isFinite(index)) return;
+
+    const patterns = Array.isArray(currentSettings.blacklistPatterns)
+      ? [...currentSettings.blacklistPatterns]
+      : [];
+
+    patterns.splice(index, 1);
+    currentSettings.blacklistPatterns = patterns;
+    await applySettings();
+    renderBlacklistList();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && blacklistModal.classList.contains('open')) {
+      closeBlacklistModal();
+    }
+  });
+
+  blacklistModal.addEventListener('click', (e) => {
+    if (e.target === blacklistModal) {
+      closeBlacklistModal();
+    }
+  });
+
   updateUI();
+  renderBlacklistList();
+  await refreshSiteStatus();
 })();

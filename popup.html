@@ -1,20 +1,361 @@
 <!DOCTYPE html>
 <html>
+
 <head>
   <meta charset="utf-8">
   <style>
-    body { width: 260px; padding: 12px; font-family: sans-serif; background: #1e1e2f; color: #eee; }
-    .control { margin-bottom: 16px; }
-    label { display: block; margin-bottom: 6px; font-size: 13px; }
-    input[type="range"] { width: 100%; cursor: pointer; }
-    .value-display { font-size: 12px; text-align: right; margin-top: 4px; color: #aaa; }
-    button { background: #3a6ea5; border: none; color: white; padding: 6px 12px; border-radius: 6px; cursor: pointer; width: 100%; }
-    button:hover { background: #2c4d73; }
-    .row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
-    .row label { margin: 0; }
-    hr { border-color: #444; margin: 16px 0; }
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      width: 300px;
+      padding: 12px;
+      font-family: sans-serif;
+      background: #1e1e2f;
+      color: #eee;
+    }
+
+    .control {
+      margin-bottom: 10px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 13px;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      cursor: pointer;
+    }
+
+    .value-display {
+      font-size: 12px;
+      text-align: right;
+      margin-top: 4px;
+      color: #aaa;
+    }
+
+    button {
+      background: #683ba8;
+      border: none;
+      color: white;
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      width: 100%;
+    }
+
+    button:hover {
+      filter: brightness(80%);
+    }
+
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .row label {
+      margin: 0;
+    }
+
+    hr {
+      border-color: rgb(30 30 47 / 45%);
+      margin: 10px 0;
+    }
+
+
+    /* === range theme and appearance (https://codepen.io/ShadowShahriar/pen/zYPPYrQ) === */
+    input[type="range"] {
+      color: #683ba8;
+      --thumb-height: 1.125em;
+      --track-height: 0.125em;
+      --track-color: rgba(0, 0, 0, 0.2);
+      --brightness-hover: 155%;
+      --brightness-down: 80%;
+      --clip-edges: 0.125em;
+    }
+
+    input[type="range"].win10-thumb {
+      color: #2b2d42;
+
+      --thumb-height: 1.375em;
+      --thumb-width: 0.5em;
+      --clip-edges: 0.0125em;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      html {
+        background-color: #000;
+      }
+
+      html::before {
+        background: radial-gradient(circle at center, #101112, #000);
+      }
+
+      input[type="range"] {
+        color: #f07167;
+        --track-color: rgba(255, 255, 255, 0.1);
+      }
+
+      input[type="range"].win10-thumb {
+        color: #3a86ff;
+      }
+    }
+
+    /* === range commons === */
+    input[type="range"] {
+      position: relative;
+      background: #fff0;
+      overflow: hidden;
+    }
+
+    input[type="range"]:active {
+      cursor: grabbing;
+    }
+
+    input[type="range"]:disabled {
+      filter: grayscale(1);
+      opacity: 0.3;
+      cursor: not-allowed;
+    }
+
+    /* === WebKit specific styles === */
+    input[type="range"],
+    input[type="range"]::-webkit-slider-runnable-track,
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      transition: all ease 100ms;
+      height: var(--thumb-height);
+    }
+
+    input[type="range"]::-webkit-slider-runnable-track,
+    input[type="range"]::-webkit-slider-thumb {
+      position: relative;
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+      --thumb-radius: calc((var(--thumb-height) * 0.5) - 1px);
+      --clip-top: calc((var(--thumb-height) - var(--track-height)) * 0.5 - 0.5px);
+      --clip-bottom: calc(var(--thumb-height) - var(--clip-top));
+      --clip-further: calc(100% + 1px);
+      --box-fill: calc(-100vmax - var(--thumb-width, var(--thumb-height))) 0 0 100vmax currentColor;
+
+      width: var(--thumb-width, var(--thumb-height));
+      background: linear-gradient(currentColor 0 0) scroll no-repeat left center / 50% calc(var(--track-height) + 1px);
+      background-color: currentColor;
+      box-shadow: var(--box-fill);
+      border-radius: var(--thumb-width, var(--thumb-height));
+
+      filter: brightness(100%);
+      clip-path: polygon(100% -1px,
+          var(--clip-edges) -1px,
+          0 var(--clip-top),
+          -100vmax var(--clip-top),
+          -100vmax var(--clip-bottom),
+          0 var(--clip-bottom),
+          var(--clip-edges) 100%,
+          var(--clip-further) var(--clip-further));
+    }
+
+    input[type="range"]:hover::-webkit-slider-thumb {
+      filter: brightness(var(--brightness-hover));
+      cursor: grab;
+    }
+
+    input[type="range"]:active::-webkit-slider-thumb {
+      filter: brightness(var(--brightness-down));
+      cursor: grabbing;
+    }
+
+    input[type="range"]::-webkit-slider-runnable-track {
+      background: linear-gradient(var(--track-color) 0 0) scroll no-repeat center / 100% calc(var(--track-height) + 1px);
+    }
+
+    input[type="range"]:disabled::-webkit-slider-thumb {
+      cursor: not-allowed;
+    }
+
+    /* === Firefox specific styles === */
+    input[type="range"],
+    input[type="range"]::-moz-range-track,
+    input[type="range"]::-moz-range-thumb {
+      appearance: none;
+      transition: all ease 100ms;
+      height: var(--thumb-height);
+    }
+
+    input[type="range"]::-moz-range-track,
+    input[type="range"]::-moz-range-thumb,
+    input[type="range"]::-moz-range-progress {
+      background: #fff0;
+    }
+
+    input[type="range"]::-moz-range-thumb {
+      background: currentColor;
+      border: 0;
+      width: var(--thumb-width, var(--thumb-height));
+      border-radius: var(--thumb-width, var(--thumb-height));
+      cursor: grab;
+    }
+
+    input[type="range"]:active::-moz-range-thumb {
+      cursor: grabbing;
+    }
+
+    input[type="range"]::-moz-range-track {
+      width: 100%;
+      background: var(--track-color);
+    }
+
+    input[type="range"]::-moz-range-progress {
+      appearance: none;
+      background: currentColor;
+      transition-delay: 30ms;
+    }
+
+    input[type="range"]::-moz-range-track,
+    input[type="range"]::-moz-range-progress {
+      height: calc(var(--track-height) + 1px);
+      border-radius: var(--track-height);
+    }
+
+    input[type="range"]::-moz-range-thumb,
+    input[type="range"]::-moz-range-progress {
+      filter: brightness(100%);
+    }
+
+    input[type="range"]:hover::-moz-range-thumb,
+    input[type="range"]:hover::-moz-range-progress {
+      filter: brightness(var(--brightness-hover));
+    }
+
+    input[type="range"]:active::-moz-range-thumb,
+    input[type="range"]:active::-moz-range-progress {
+      filter: brightness(var(--brightness-down));
+    }
+
+    input[type="range"]:disabled::-moz-range-thumb {
+      cursor: not-allowed;
+    }
+
+    /* === end range theme and appearance === */
+
+    /*Chrome 81 - Checkbox & Radio Styling (https://codepen.io/chris22smith/pen/JjYEaGO)*/
+    input[type=checkbox],
+    input[type=radio] {
+      filter: grayscale(1);
+      filter: hue-rotate(66deg) saturate(60%) contrast(180%)
+    }
+
+    /*end Chrome 81 - Checkbox & Radio Styling*/
+
+    .blacklist-modal {
+      position: fixed;
+      inset: 0;
+      display: none;
+      z-index: 999999;
+    }
+
+    .blacklist-modal.open {
+      display: block;
+    }
+
+    .blacklist-modal__backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.55);
+    }
+
+    .blacklist-modal__panel {
+      position: relative;
+      width: min(720px, calc(100vw - 24px));
+      height: min(100vh, calc(100vh - 24px));
+      margin: 12px auto;
+      background: #1e1e2f;
+      border-radius: 14px;
+      box-shadow: 0 18px 60px rgba(0, 0, 0, 0.3);
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .blacklist-modal__header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .blacklist-modal__header button {
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      border: none;
+      background: none;
+      cursor: pointer;
+      font-size: 20px;
+      line-height: 1;
+    }
+
+    .blacklist-modal__add {
+      display: flex;
+      gap: 8px;
+    }
+
+    .blacklist-modal__add input {
+      flex: 1;
+    }
+
+    .blacklist-list {
+      overflow: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding-right: 2px;
+    }
+
+    .blacklist-item {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      padding: 10px;
+      border-radius: 12px;
+      background: #3b2b53;
+    }
+
+    .blacklist-item input {
+      color: #fff;
+      border: none !important;
+      background: transparent;
+      width: 100%;
+      flex: 1;
+    }
+
+    .blacklist-item button {
+      width: 100%;
+      max-width: max-content;
+      white-space: nowrap;
+    }
+
+    #siteStatus {
+      user-select: none;
+    }
+
+    #siteStatusDot.active {
+      background: #2ecc71;
+    }
+
+    #siteStatusDot.inactive {
+      background: #ff5a5f;
+    }
   </style>
 </head>
+
 <body>
   <div class="control">
     <label>Pitch Shift (semitones): <span id="semitonesVal">0</span></label>
@@ -48,9 +389,37 @@
     <label>Preserve Pitch</label>
   </div>
 
-  <div class="control" style="margin-top: 16px; margin-bottom: 0px;">
-    <button id="resetBtn">Reset</button>
+
+  <!-- рядом с кнопкой Reset -->
+  <div class="row" style="margin-top: 10px; margin-bottom: 0px; display:flex; gap:8px; align-items:center;">
+    <button id="blacklistBtn" type="button">Blacklist</button>
+    <button id="resetBtn" type="button">Reset</button>
+    <div id="siteStatus" style="margin-left:auto; display:flex; align-items:center; gap:6px; font-size:12px;">
+      <span id="siteStatusDot" style="width:10px; height:10px; border-radius:999px; display:inline-block;"></span>
+      <span id="siteStatusText">active</span>
+    </div>
   </div>
+
+  <!-- модалка -->
+  <div id="blacklistModal" class="blacklist-modal" aria-hidden="true">
+    <div class="blacklist-modal__backdrop" id="blacklistModalClose"></div>
+
+    <div class="blacklist-modal__panel">
+      <div class="blacklist-modal__header">
+        <div style="font-weight:600;">Blacklist</div>
+        <button id="blacklistModalCloseBtn" type="button">×</button>
+      </div>
+
+      <div class="blacklist-modal__add">
+        <input id="blacklistInput" type="text" placeholder="https://www.youtube.com/*" spellcheck="false" />
+        <button id="blacklistAddBtn" type="button">Add</button>
+      </div>
+
+      <div id="blacklistList" class="blacklist-list"></div>
+    </div>
+  </div>
+
   <script src="popup.js"></script>
 </body>
+
 </html>
