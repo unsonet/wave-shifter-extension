@@ -97,6 +97,20 @@
     return base + fine;
   }
 
+   // --- Optimized Apply with Debounce ---
+  let saveTimeout;
+  function scheduleApply() {
+    if (saveTimeout) clearTimeout(saveTimeout);
+    saveTimeout = setTimeout(async () => {
+      await chrome.storage.local.set({ pitchSettings: currentSettings });
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab?.id) {
+        chrome.tabs.sendMessage(tab.id, { type: "updateSettings", settings: currentSettings });
+      }
+      await refreshSiteStatus();
+    }, 100); // 100ms delay for collecting fast changes
+  }
+
   function updateUI() {
     semitonesSlider.value = currentSettings.pitchValueSemitones;
     centsSlider.value = currentSettings.pitchValueCents;
@@ -203,41 +217,41 @@
   semitonesSlider.addEventListener('input', async (e) => {
     currentSettings.pitchValueSemitones = parseInt(e.target.value, 10);
     semitonesVal.textContent = currentSettings.pitchValueSemitones;
-    await applySettings();
+    scheduleApply();
   });
 
   centsSlider.addEventListener('input', async (e) => {
     currentSettings.pitchValueCents = parseInt(e.target.value, 10);
     centsVal.textContent = currentSettings.pitchValueCents;
-    await applySettings();
+    scheduleApply();
   });
 
   blockSizeSlider.addEventListener('input', async (e) => {
     currentSettings.windowSizeMilliseconds = parseInt(e.target.value, 10);
     blockSizeVal.textContent = currentSettings.windowSizeMilliseconds;
-    await applySettings();
+    scheduleApply();
   });
 
   smartCheck.addEventListener('change', async (e) => {
     currentSettings.applySmartProcessing = e.target.checked;
-    await applySettings();
+    scheduleApply();
   });
 
   speedUnitsSlider.addEventListener('input', async (e) => {
     currentSettings.speedUnits = parseInt(e.target.value, 10);
     updateUI();
-    await applySettings();
+    scheduleApply();
   });
 
   speedFineSlider.addEventListener('input', async (e) => {
     currentSettings.speedFine = parseInt(e.target.value, 10);
     updateUI();
-    await applySettings();
+    scheduleApply();
   });
 
   preservePitchCheck.addEventListener('change', async (e) => {
     currentSettings.preservePitch = e.target.checked;
-    await applySettings();
+    scheduleApply();
   });
 
   resetBtn.addEventListener('click', async () => {

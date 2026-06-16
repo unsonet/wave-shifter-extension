@@ -5,7 +5,7 @@
   "description": "Real-time audio pitch shifter and playback speed controller for videos and music on any website.",
   "author": "Unsonet <https://github.com/Unsonet>",
   "homepage_url": "https://unsonet.onrender.com/",
-  "version": "1.1",
+  "version": "1.2",
   "permissions": [
     "storage",
     "declarativeNetRequest"

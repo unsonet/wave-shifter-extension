@@ -1,454 +1,342 @@
-(function () {
-    if (window.__pitchChangerPatched) return;
-    window.__pitchChangerPatched = true;
+(function() {
+  if (window.__pitchChangerPatched) return;
+  window.__pitchChangerPatched = true;
 
-    const workletUrl = new URL('/__pitch_shifter_worklet.js', window.location.origin).href;
+  // Use URL passed from content.js or fallback to default
+  const workletUrl = window.__pitchShifterExtensionConfig?.workletUrl || 
+                     new URL("/__pitch_shifter_worklet.js", window.location.origin).href;
 
-    let audioCtx = null;
-    let pitchNode = null;
-    let isNodeReady = false;
-    let initPromise = null;
-    let startPromise = null;
+  let audioCtx = null;
+  let pitchNode = null;
+  let isNodeReady = false;
+  let initPromise = null;
+  let startPromise = null;
+  
+  const defaultSettings = {
+    pitchValueSemitones: 0,
+    pitchValueCents: 0,
+    windowSizeMilliseconds: 120,
+    applySmartProcessing: true,
+    speedUnits: 0,
+    speedFine: 0,
+    preservePitch: true,
+    blacklistPatterns: []
+  };
+  
+  let settings = { ...defaultSettings };
+  let siteIsBlacklisted = false;
+  const connectedMediaElements = new Set();
+  const connectingMediaElements = new WeakSet();
 
-    let settings = {
-        pitchValueSemitones: 0,
-        pitchValueCents: 0,
-        windowSizeMilliseconds: 120,
-        applySmartProcessing: true,
-        speedUnits: 0,
-        speedFine: 0,
-        preservePitch: true,
-        blacklistPatterns: []
-    };
+  // --- Utilities ---
 
-    let siteIsBlacklisted = false;
+  function isBlacklisted() {
+    const patterns = Array.isArray(settings.blacklistPatterns) ? settings.blacklistPatterns : [];
+    if (!patterns.length) return false;
+    
+    const target = location.href;
+    return patterns.some(pattern => {
+      const normalizedPattern = String(pattern || "").trim();
+      if (!normalizedPattern) return false;
+      if (normalizedPattern.includes("*")) {
+        const regex = new RegExp("^" + normalizedPattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\\\*/g, ".*") + "$");
+        return regex.test(target);
+      }
+      return target === normalizedPattern;
+    });
+  }
 
-    const connectedMediaElements = new Set();
-    const connectingMediaElements = new WeakSet();
+  function applyPitchSettingsToNode(node, s) {
+    if (!node || !node.port) return;
+    const totalSemitones = s.pitchValueSemitones + (s.pitchValueCents / 100);
+    node.port.postMessage([null, "configure", {
+      blockMs: s.windowSizeMilliseconds,
+      splitComputation: !s.applySmartProcessing
+    }]);
+    node.port.postMessage([null, "start", {
+      active: true,
+      semitones: totalSemitones,
+      tonalityHz: 8800
+    }]);
+  }
 
-    function normalizePattern(value) {
-        return String(value ?? '').trim();
+  function applySpeedSettings(mediaEl) {
+    const u = Number(settings.speedUnits) || 0;
+    const playbackRate = ((u < 0 ? 100 + 1 * u : 100 + 5 * u) + (Number(settings.speedFine) || 0)) / 100;
+    
+    if (mediaEl.playbackRate !== playbackRate || mediaEl.defaultPlaybackRate !== playbackRate) {
+      mediaEl.playbackRate = playbackRate;
+      mediaEl.defaultPlaybackRate = playbackRate;
     }
 
-    function escapeRegExp(str) {
-        return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const preservePitch = !!settings.preservePitch;
+    if (mediaEl.preservesPitch !== preservePitch) mediaEl.preservesPitch = preservePitch;
+    if ("webkitPreservesPitch" in mediaEl && mediaEl.webkitPreservesPitch !== preservePitch) {
+      mediaEl.webkitPreservesPitch = preservePitch;
     }
+  }
 
-    function matchURLPatterns(url, urlPatterns) {
-        const patterns = typeof urlPatterns === 'string'
-            ? [urlPatterns]
-            : Array.isArray(urlPatterns)
-                ? urlPatterns
-                : [];
-
-        const target = String(url || '');
-
-        return patterns.some((pattern) => {
-            const normalizedPattern = normalizePattern(pattern);
-            if (!normalizedPattern) return false;
-
-            if (normalizedPattern.includes('*')) {
-                const regex = new RegExp(
-                    '^' + escapeRegExp(normalizedPattern).replace(/\\\*/g, '.*') + '$'
-                );
-                return regex.test(target);
-            }
-
-            return target === normalizedPattern;
-        });
+  function handleRateChange(e) {
+    if (e && e.target && (e.target.tagName === "AUDIO" || e.target.tagName === "VIDEO")) {
+      applySpeedSettings(e.target);
     }
+  }
 
-    function isBlacklisted() {
-        return matchURLPatterns(location.href, settings.blacklistPatterns || []);
+  function disconnectNodeSafe(node) {
+    if (node) { try { node.disconnect(); } catch (e) {} }
+  }
+
+  function connectNodeSafe(node, target) {
+    if (node && target) { try { node.connect(target); } catch (e) {} }
+  }
+
+  function routeMediaElement(mediaEl, bypass) {
+    const source = mediaEl.__pitchSource;
+    if (source && audioCtx) {
+      disconnectNodeSafe(source);
+      connectNodeSafe(source, bypass ? audioCtx.destination : pitchNode);
     }
+  }
 
-    function applyPitchSettingsToNode(node, s) {
-        if (!node || !node.port) return;
+  // --- AudioContext Initialization (Strict Gesture Handling) ---
+  
+  async function initPitchShifter() {
+    if (siteIsBlacklisted) return;
+    if (audioCtx && audioCtx.state !== "closed") return;
 
-        const totalSemitones = s.pitchValueSemitones + s.pitchValueCents / 100;
+    if (initPromise) return initPromise;
 
-        node.port.postMessage([
-            null,
-            'configure',
-            {
-                blockMs: s.windowSizeMilliseconds,
-                splitComputation: !s.applySmartProcessing
-            }
-        ]);
-
-        node.port.postMessage([
-            null,
-            'start',
-            {
-                active: true,
-                semitones: totalSemitones,
-                tonalityHz: 8800
-            }
-        ]);
-    }
-
-    function applySpeedSettings(mediaEl) {
-        const u = Number(settings.speedUnits) || 0;
-        const f = Number(settings.speedFine) || 0;
-        const base = u < 0 ? 100 + 1 * u : 100 + 5 * u;
-        const playbackRate = (base + f) / 100;
-
-        if (
-            mediaEl.playbackRate !== playbackRate ||
-            mediaEl.defaultPlaybackRate !== playbackRate
-        ) {
-            mediaEl.playbackRate = playbackRate;
-            mediaEl.defaultPlaybackRate = playbackRate;
-        }
-
-        const preservePitch = !!settings.preservePitch;
-
-        if (mediaEl.preservesPitch !== preservePitch) {
-            mediaEl.preservesPitch = preservePitch;
-        }
-
-        if (
-            'webkitPreservesPitch' in mediaEl &&
-            mediaEl.webkitPreservesPitch !== preservePitch
-        ) {
-            mediaEl.webkitPreservesPitch = preservePitch;
-        }
-    }
-
-    function resetNativePlayback(mediaEl) {
-        try {
-            mediaEl.playbackRate = 1;
-        } catch { }
-
-        try {
-            mediaEl.defaultPlaybackRate = 1;
-        } catch { }
-
-        try {
-            if ('preservesPitch' in mediaEl) {
-                mediaEl.preservesPitch = true;
-            }
-        } catch { }
-
-        try {
-            if ('webkitPreservesPitch' in mediaEl) {
-                mediaEl.webkitPreservesPitch = true;
-            }
-        } catch { }
-    }
-
-    function handleRateChange(e) {
-        const el = e && e.target;
-        if (!el) return;
-        if (el.tagName === 'AUDIO' || el.tagName === 'VIDEO') {
-            applySpeedSettings(el);
-        }
-    }
-
-    function unlockAudioContext(ctx) {
-        const unlock = async () => {
-            if (ctx.state !== 'suspended') return;
-
+    initPromise = (async () => {
+      try {
+        // 1. Create AudioContext (it starts in 'suspended' state)
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // 2. Setup Gesture Listeners
+        // We do NOT call resume() here. We wait for the user to interact.
+        // The listeners will fire on the FIRST interaction and then remove themselves.
+        const resumeOnInteraction = async () => {
+          if (audioCtx.state === "suspended") {
             try {
-                await ctx.resume();
-                console.log('[AudioContext] unlocked');
+              await audioCtx.resume();
+              console.log("[PitchShifter] AudioContext unlocked successfully");
             } catch (e) {
-                console.warn('[AudioContext] unlock failed', e);
+              console.warn("[PitchShifter] Resume failed (need interaction):", e);
             }
-
-            window.removeEventListener('click', unlock);
-            window.removeEventListener('keydown', unlock);
-            window.removeEventListener('touchstart', unlock);
+          }
         };
 
-        window.addEventListener('click', unlock, { once: true });
-        window.addEventListener('keydown', unlock, { once: true });
-        window.addEventListener('touchstart', unlock, { once: true });
-    }
+        // Attach listeners to window with { once: true }
+        // We use capture: true to ensure we catch the event early
+        window.addEventListener("click", resumeOnInteraction, { once: true, capture: true });
+        window.addEventListener("keydown", resumeOnInteraction, { once: true, capture: true });
+        window.addEventListener("touchstart", resumeOnInteraction, { once: true, capture: true });
 
-    function disconnectNodeSafe(node) {
-        if (!node) return;
-        try {
-            node.disconnect();
-        } catch { }
-    }
+        // 3. Load Worklet
+        await audioCtx.audioWorklet.addModule(workletUrl);
+        
+        pitchNode = new AudioWorkletNode(audioCtx, "signalsmith-stretch", {
+          numberOfInputs: 1,
+          numberOfOutputs: 1,
+          outputChannelCount: [2]
+        });
 
-    function connectNodeSafe(node, target) {
-        if (!node || !target) return;
-        try {
-            node.connect(target);
-        } catch { }
-    }
+        pitchNode.port.onmessage = (e) => {
+          const data = e && e.data;
+          if (data && data[0] === "ready") {
+            isNodeReady = true;
+            applyPitchSettingsToNode(pitchNode, settings);
+          }
+        };
 
-    function routeMediaElement(mediaEl, bypass) {
-        const source = mediaEl.__pitchSource;
-        if (!source || !audioCtx) return;
-
-        disconnectNodeSafe(source);
-
-        if (bypass) {
-            connectNodeSafe(source, audioCtx.destination);
-        } else {
-            connectNodeSafe(source, pitchNode);
-        }
-    }
-
-    function setBlacklistMode(enabled) {
-        siteIsBlacklisted = enabled;
-
-        if (!audioCtx || !pitchNode) return;
-
-        disconnectNodeSafe(pitchNode);
-
-        if (enabled) {
-            connectedMediaElements.forEach((el) => routeMediaElement(el, true));
-        } else {
-            connectNodeSafe(pitchNode, audioCtx.destination);
-            connectedMediaElements.forEach((el) => routeMediaElement(el, false));
-
-            if (isNodeReady) {
-                applyPitchSettingsToNode(pitchNode, settings);
-            }
-        }
-    }
-
-    async function initPitchShifter() {
-        if (siteIsBlacklisted) return;
-
-        if (audioCtx && audioCtx.state !== 'closed' && pitchNode) {
-            return;
-        }
-
-        if (initPromise) {
-            return initPromise;
-        }
-
-        initPromise = (async () => {
-            audioCtx = new AudioContext();
-            unlockAudioContext(audioCtx);
-
-            if (audioCtx.state === 'suspended') {
-                await audioCtx.resume();
-            }
-
-            await audioCtx.audioWorklet.addModule(workletUrl);
-
-            pitchNode = new AudioWorkletNode(audioCtx, 'signalsmith-stretch', {
-                numberOfInputs: 1,
-                numberOfOutputs: 1,
-                outputChannelCount: [2]
-            });
-
-            pitchNode.port.onmessage = (e) => {
-                const data = e && e.data;
-                if (data && data[0] === 'ready') {
-                    isNodeReady = true;
-                    applyPitchSettingsToNode(pitchNode, settings);
-                }
-            };
-
+        // Connect to destination only if not blacklisted
+        if (!siteIsBlacklisted) {
             pitchNode.connect(audioCtx.destination);
-        })().catch((err) => {
-            initPromise = null;
-            console.error('[PitchShifter] init failed:', err);
-            throw err;
-        });
-
-        return initPromise;
-    }
-
-    function ensureCorsEnabled(mediaEl) {
-        const src = mediaEl.currentSrc || mediaEl.src;
-        if (!src) return true;
-
-        const url = new URL(src, location.href);
-
-        if (url.origin === location.origin) return true;
-
-        if (mediaEl.crossOrigin !== 'anonymous') {
-            mediaEl.crossOrigin = 'anonymous';
-            return false;
         }
 
-        return true;
+      } catch (err) {
+        initPromise = null;
+        console.log("[PitchShifter] init failed:", err);
+        throw err;
+      }
+    })();
+
+    return initPromise;
+  }
+
+  // --- Media Element Connection ---
+
+  function ensureCorsEnabled(mediaEl) {
+    const src = mediaEl.currentSrc || mediaEl.src;
+    if (!src) return true;
+
+    // If same origin, no CORS needed
+    if (new URL(src, location.href).origin === location.origin) return true;
+
+    // If already anonymous, we are good
+    if (mediaEl.crossOrigin === "anonymous") return true;
+
+    // Otherwise enable CORS (requires reload)
+    console.log("[PitchShifter] Enabling CORS for:", src);
+    mediaEl.crossOrigin = "anonymous";
+    return false; 
+  }
+
+  async function connectMediaElement(mediaEl) {
+    if (!mediaEl || mediaEl.nodeType !== Node.ELEMENT_NODE || siteIsBlacklisted) return;
+    if (connectingMediaElements.has(mediaEl) || mediaEl.__pitchConnected) {
+      applySpeedSettings(mediaEl);
+      return;
     }
 
-    async function connectMediaElement(mediaEl) {
-        if (!mediaEl || mediaEl.nodeType !== Node.ELEMENT_NODE) return;
+    connectingMediaElements.add(mediaEl);
 
-        if (siteIsBlacklisted) return;
-
-        if (connectingMediaElements.has(mediaEl) || mediaEl.__pitchConnected) {
-            applySpeedSettings(mediaEl);
-            return;
-        }
-
-        connectingMediaElements.add(mediaEl);
-
-        try {
-            await bootstrap();
-
-            if (siteIsBlacklisted) return;
-            if (!audioCtx || !pitchNode) return;
-
-            if (audioCtx.state === 'suspended') {
-                await audioCtx.resume();
-            }
-
-            if (!mediaEl.__speedListenersAdded) {
-                mediaEl.addEventListener('ratechange', handleRateChange);
-                mediaEl.__speedListenersAdded = true;
-            }
-
-            applySpeedSettings(mediaEl);
-
-            if (!ensureCorsEnabled(mediaEl)) {
-                const src = mediaEl.currentSrc || mediaEl.src;
-                if (src) {
-                    const t = mediaEl.currentTime;
-                    const wasPlaying = !mediaEl.paused;
-
-                    mediaEl.src = src;
-                    mediaEl.addEventListener('loadedmetadata', async () => {
-                        try {
-                            mediaEl.currentTime = t;
-                        } catch { }
-                        if (wasPlaying) {
-                            try {
-                                await mediaEl.play();
-                            } catch { }
-                        }
-                    }, { once: true });
-                }
-                return;
-            }
-
-            if (!mediaEl.__pitchSource) {
-                const source = audioCtx.createMediaElementSource(mediaEl);
-                mediaEl.__pitchSource = source;
-                mediaEl.__pitchContext = audioCtx;
-            }
-
-            routeMediaElement(mediaEl, siteIsBlacklisted);
-
-            mediaEl.__pitchNode = pitchNode;
-            mediaEl.__pitchConnected = true;
-            connectedMediaElements.add(mediaEl);
-        } catch (e) {
-            mediaEl.__pitchConnected = false;
-            console.error('[PitchShifter] Failed to connect media element:', e);
-        } finally {
-            connectingMediaElements.delete(mediaEl);
-        }
-    }
-
-    function connectAllMedia() {
-        if (siteIsBlacklisted) return;
-        document.querySelectorAll('audio, video').forEach(connectMediaElement);
-    }
-
-    async function bootstrap() {
-        if (siteIsBlacklisted) return;
-
-        if (startPromise) {
-            return startPromise;
-        }
-
+    try {
+      // Initialize AudioContext system (graph setup, but suspended)
+      if (!startPromise) {
         startPromise = (async () => {
-            await initPitchShifter();
-            if (!siteIsBlacklisted) {
-                connectAllMedia();
-            }
-        })().catch((err) => {
-            startPromise = null;
-            throw err;
+          await initPitchShifter(); // This now waits for user gesture
+          if (!siteIsBlacklisted) connectAllMedia();
+        })().catch(err => {
+          startPromise = null;
+          throw err;
         });
+      }
+      await startPromise;
 
-        return startPromise;
+      if (siteIsBlacklisted || !audioCtx || !pitchNode) return;
+
+      // Note: We do NOT call audioCtx.resume() here.
+      // It is handled by the global click/touch listeners attached in initPitchShifter.
+      // If the user clicked play, the global listener will have resumed the context 
+      // before this 'play' event bubbles up or completes, thanks to { capture: true }.
+
+      if (!mediaEl.__speedListenersAdded) {
+        mediaEl.addEventListener("ratechange", handleRateChange);
+        mediaEl.__speedListenersAdded = true;
+      }
+      
+      applySpeedSettings(mediaEl);
+
+      // Handle CORS reload if necessary
+      const needsReload = !ensureCorsEnabled(mediaEl);
+      if (needsReload) {
+        const src = mediaEl.currentSrc || mediaEl.src;
+        if (src) {
+          const t = mediaEl.currentTime;
+          const wasPlaying = !mediaEl.paused;
+          mediaEl.src = src; 
+          mediaEl.addEventListener("loadedmetadata", async () => {
+            try { mediaEl.currentTime = t; } catch (e) {}
+            if (wasPlaying) {
+              try { await mediaEl.play(); } catch (e) {}
+            }
+          }, { once: true });
+          return; 
+        }
+      }
+
+      if (!mediaEl.__pitchSource) {
+        const source = audioCtx.createMediaElementSource(mediaEl);
+        mediaEl.__pitchSource = source;
+        mediaEl.__pitchContext = audioCtx;
+      }
+
+      routeMediaElement(mediaEl, false);
+      mediaEl.__pitchNode = pitchNode;
+      mediaEl.__pitchConnected = true;
+      connectedMediaElements.add(mediaEl);
+
+    } catch (e) {
+      mediaEl.__pitchConnected = false;
+      console.log("[PitchShifter] Failed to connect media element:", e);
+    } finally {
+      connectingMediaElements.delete(mediaEl);
     }
+  }
 
-    function refreshBlacklistState() {
-        const blacklisted = isBlacklisted();
-
-        if (blacklisted !== siteIsBlacklisted) {
-            setBlacklistMode(blacklisted);
-        } else {
-            siteIsBlacklisted = blacklisted;
-        }
-
-        return siteIsBlacklisted;
+  function connectAllMedia() {
+    if (siteIsBlacklisted) return;
+    // Cleanup removed elements from Set
+    for (const el of connectedMediaElements) {
+      if (!document.body.contains(el)) {
+        connectedMediaElements.delete(el);
+      }
     }
+    document.querySelectorAll("audio, video").forEach(connectMediaElement);
+  }
 
-    window.addEventListener('message', async (e) => {
-        if (e.source !== window) return;
-        const data = e.data;
+  // --- Event Listeners ---
 
-        if (data && data.type === 'PITCH_UPDATE') {
-            settings = data.settings || settings;
-
-            const blacklisted = isBlacklisted();
-            if (blacklisted !== siteIsBlacklisted) {
-                setBlacklistMode(blacklisted);
-            } else {
-                siteIsBlacklisted = blacklisted;
-            }
-
-            if (siteIsBlacklisted) {
-                return;
-            }
-
-            await bootstrap();
-
-            if (pitchNode && isNodeReady) {
-                applyPitchSettingsToNode(pitchNode, settings);
-            }
-
-            connectedMediaElements.forEach((el) => {
-                applySpeedSettings(el);
-            });
+  window.addEventListener("message", async e => {
+    if (e.source !== window) return;
+    const data = e.data;
+    if (data && data.type === "PITCH_UPDATE") {
+      settings = { ...settings, ...(data.settings || {}) };
+      const blacklisted = isBlacklisted();
+      
+      if (blacklisted !== siteIsBlacklisted) {
+        siteIsBlacklisted = blacklisted;
+        if (audioCtx && pitchNode) {
+          disconnectNodeSafe(pitchNode);
+          if (siteIsBlacklisted) {
+            connectedMediaElements.forEach(el => routeMediaElement(el, true));
+          } else {
+            connectNodeSafe(pitchNode, audioCtx.destination);
+            connectedMediaElements.forEach(el => routeMediaElement(el, false));
+            if (isNodeReady) applyPitchSettingsToNode(pitchNode, settings);
+          }
         }
-    });
+      } else {
+        siteIsBlacklisted = blacklisted;
+      }
 
-    const observer = new MutationObserver((mutations) => {
-        if (siteIsBlacklisted) return;
+      if (siteIsBlacklisted) return;
 
-        for (const mut of mutations) {
-            for (const node of mut.addedNodes) {
-                if (node.nodeType !== Node.ELEMENT_NODE) continue;
+      connectedMediaElements.forEach(el => applySpeedSettings(el));
+      if (pitchNode && isNodeReady) applyPitchSettingsToNode(pitchNode, settings);
+    }
+  });
 
-                if (node.matches && node.matches('audio, video')) {
-                    connectMediaElement(node);
-                } else if (node.querySelectorAll) {
-                    node.querySelectorAll('audio, video').forEach(connectMediaElement);
-                }
-            }
+  const observer = new MutationObserver(mutations => {
+    if (siteIsBlacklisted) return;
+    for (const mut of mutations) {
+      for (const node of mut.addedNodes) {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          if (node.matches && (node.matches("audio") || node.matches("video"))) {
+            connectMediaElement(node);
+          } else if (node.querySelectorAll) {
+            node.querySelectorAll("audio, video").forEach(connectMediaElement);
+          }
         }
-    });
+      }
+    }
+  });
 
-    const startObserver = () => {
-        if (!document.body) return;
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true
-        });
-        connectAllMedia();
-    };
-
+  const startObserver = () => {
     if (document.body) {
-        startObserver();
-    } else {
-        document.addEventListener('DOMContentLoaded', startObserver);
+      observer.observe(document.body, { childList: true, subtree: true });
+      connectAllMedia();
     }
+  };
 
-    document.addEventListener('play', (e) => {
-        const el = e && e.target;
-        if (el && (el.tagName === 'AUDIO' || el.tagName === 'VIDEO')) {
-            if (siteIsBlacklisted) return;
+  if (document.body) {
+    startObserver();
+  } else {
+    document.addEventListener("DOMContentLoaded", startObserver);
+  }
 
-            if (audioCtx && audioCtx.state === 'suspended') {
-                audioCtx.resume();
-            }
-            connectMediaElement(el);
-        }
-    }, true);
+  // We listen to 'play' to connect the graph.
+  // We do NOT call resume() here; the global window listeners handle unlocking.
+  document.addEventListener("play", async e => {
+    const el = e && e.target;
+    if (el && (el.tagName === "AUDIO" || el.tagName === "VIDEO") && !siteIsBlacklisted) {
+      try {
+        if (!audioCtx) await initPitchShifter();
+        await connectMediaElement(el);
+      } catch (err) {
+        console.warn("[PitchShifter] activation failed:", err);
+      }
+    }
+  }, true);
+
 })();
