@@ -26,6 +26,22 @@
     );
   }
 
+  // --- Blacklist Logic Utilities ---
+
+  function matchURLPatterns(url, urlPatterns) {
+    function escapeString(str, slashLength = 2) {
+      return str.replace(new RegExp('[-[\\]{}()*+?&.,\\\\^$|#\'\"]', 'gim'), (`${[...new Array(slashLength)].map(i => '\\').join('')}$&`));
+    };
+
+    urlPatterns = typeof urlPatterns == 'string' ? [urlPatterns] : urlPatterns || [];
+
+    return urlPatterns?.some(pattern => {
+      return url.match(new RegExp('^' + escapeString(pattern, 1).replace(/\\\*/gim, '.*') + '$', ''));
+    });
+  }
+
+  // --- Core Setup ---
+
   const workletUrl = (() => {
     let url = window.__pitchShifterExtensionConfig?.workletUrl;
     if (!url) {
@@ -54,6 +70,8 @@
 
   let usingHowler = false;
   let howlerAttached = false;
+
+  let siteIsBlacklisted = false; // Blacklist state flag
 
   const connectedMediaElements =
     new Set();
@@ -103,6 +121,44 @@
     try {
       node.connect(target);
     } catch { }
+  }
+
+  // --- Helper to reset speed/pitch to defaults ---
+  function resetMediaSpeed(mediaEl) {
+    if (!mediaEl) return;
+    
+    // We reset without performing any checks to return control to the native player or another extension
+    mediaEl.playbackRate = 1.0;
+    mediaEl.defaultPlaybackRate = 1.0;
+    mediaEl.preservesPitch = true;
+    if ("webkitPreservesPitch" in mediaEl) mediaEl.webkitPreservesPitch = true;
+    
+    // Resetting the timestamp so that our action does not trigger the handler
+    mediaEl.__lastRateSetByUs = Date.now();
+    
+    log("resetMediaSpeed applied to", mediaEl);
+  }
+
+  function resetHowlerSpeed() {
+    const howler = window.Howler;
+    if (!howler) return;
+    const howls = Array.isArray(howler._howls) ? howler._howls : [];
+    for (const howl of howls) {
+      try {
+        howl.rate(1.0);
+        howl._rate = 1.0;
+        const sounds = Array.isArray(howl._sounds) ? howl._sounds : [];
+        for (const sound of sounds) {
+          sound._rate = 1.0;
+          const node = sound?._node;
+          if (node?.playbackRate) node.playbackRate.value = 1.0;
+          if (node?.bufferSource?.playbackRate) node.bufferSource.playbackRate.value = 1.0;
+        }
+      } catch (e) {
+        log("resetHowlerSpeed failed", e);
+      }
+    }
+    log("resetHowlerSpeed applied");
   }
 
   function bindResumeHandlers(ctx) {
@@ -234,6 +290,8 @@
   }
 
   async function attachMedia() {
+    if (siteIsBlacklisted) return; // Stop if blacklisted
+
     usingHowler = false;
 
     const ctx =
@@ -256,6 +314,8 @@
   }
 
   async function attachHowler() {
+    if (siteIsBlacklisted) return false; // Stop if blacklisted
+
     const howler =
       window.Howler;
 
@@ -366,6 +426,18 @@
     const rate =
       calcPlaybackRate();
 
+   // FIX: Check for conflicts.
+    // If the speed is already what we need, do not touch the DOM (optimization).
+    if (mediaEl.playbackRate === rate && mediaEl.defaultPlaybackRate === rate) {
+      // However, you need to update the preservePitch, as it may have changed from the outside.
+      const preservePitch = !!settings.preservePitch;
+      if (mediaEl.preservesPitch !== preservePitch) {
+         mediaEl.preservesPitch = preservePitch;
+         if ("webkitPreservesPitch" in mediaEl) mediaEl.webkitPreservesPitch = preservePitch;
+      }
+      return;
+    }
+
     mediaEl.playbackRate =
       rate;
 
@@ -390,6 +462,9 @@
         preservePitch;
     }
 
+    // FIX: We mark the time of the change. This is necessary for the handleRateChange.
+    mediaEl.__lastRateSetByUs = Date.now();
+
     log(
       "applySpeedSettings",
       {
@@ -402,6 +477,8 @@
   function handleRateChange(e) {
     const mediaEl = e?.target;
 
+    if (siteIsBlacklisted) return;
+
     if (
       mediaEl &&
       (mediaEl.tagName ===
@@ -409,6 +486,14 @@
         mediaEl.tagName ===
         "VIDEO")
     ) {
+      // FIX: Cooldown (Protection against cycles and conflicts).
+      // If we changed the speed less than 100ms ago, ignore this event.
+      // This breaks the endless cycle between the two extensions (Wave Shifter and VK Blue).
+      const now = Date.now();
+      if (mediaEl.__lastRateSetByUs && (now - mediaEl.__lastRateSetByUs < 100)) {
+        return;
+      }
+
       applySpeedSettings(
         mediaEl
       );
@@ -424,22 +509,30 @@
 
     if (
       !source ||
-      !audioCtx ||
-      !pitchNode
+      !audioCtx
     ) {
       return;
     }
 
-    disconnectNodeSafe(
-      source
-    );
-
-    connectNodeSafe(
-      source,
-      bypass
-        ? audioCtx.destination
-        : pitchNode
-    );
+    // FIX: We use named connections and disconnections to avoid audio gap
+    if (bypass) {
+        // 1. Connect to Destination (new path)
+        connectNodeSafe(source, audioCtx.destination);
+        
+        // 2. Disconnect from PitchNode (old path), if connected
+        // This creates a crossover, the sound does not disappear
+        if (pitchNode) {
+            try { source.disconnect(pitchNode); } catch(e) {}
+        }
+    } else {
+        // 1. Connect to PitchNode
+        if (pitchNode) {
+            connectNodeSafe(source, pitchNode);
+            
+            // 2. Disconnect from Destination
+            try { source.disconnect(audioCtx.destination); } catch(e) {}
+        }
+    }
 
     log(
       "routeMediaElement",
@@ -455,22 +548,23 @@
 
     if (
       !howler?.masterGain ||
-      !audioCtx ||
-      !pitchNode
+      !audioCtx
     ) {
       return;
     }
-
-    disconnectNodeSafe(
-      howler.masterGain
-    );
-
-    connectNodeSafe(
-      howler.masterGain,
-      bypass
-        ? audioCtx.destination
-        : pitchNode
-    );
+    
+    // For Howler, we use the same principle of overlap.
+    if (bypass) {
+        connectNodeSafe(howler.masterGain, audioCtx.destination);
+        if (pitchNode) {
+            try { howler.masterGain.disconnect(pitchNode); } catch(e) {}
+        }
+    } else {
+        if (pitchNode) {
+            connectNodeSafe(howler.masterGain, pitchNode);
+            try { howler.masterGain.disconnect(audioCtx.destination); } catch(e) {}
+        }
+    }
 
     log("routeHowler", {
       bypass,
@@ -514,7 +608,7 @@
 
         howl._rate = rate;
       } catch (e) {
-        log("howl.rate failed",e);
+        log("howl.rate failed", e);
       }
 
       const sounds = Array.isArray(
@@ -573,7 +667,7 @@
 
           sound._rate = rate;
         } catch (e) {
-          log("sound patch failed",e);
+          log("sound patch failed", e);
         }
       }
     }
@@ -585,7 +679,8 @@
     if (
       !mediaEl ||
       mediaEl.nodeType !==
-      Node.ELEMENT_NODE
+      Node.ELEMENT_NODE ||
+      siteIsBlacklisted // Check blacklist
     ) {
       return;
     }
@@ -670,7 +765,7 @@
       mediaEl.__pitchConnected =
         false;
 
-      log("connectMediaElement failed",e);
+      log("connectMediaElement failed", e);
     } finally {
       connectingMediaElements.delete(
         mediaEl
@@ -679,6 +774,8 @@
   }
 
   function connectAllMedia() {
+    if (siteIsBlacklisted) return; // Check blacklist
+
     document
       .querySelectorAll(
         "audio, video"
@@ -719,13 +816,13 @@
         queueMicrotask(
           async () => {
             try {
-              await attachHowler();
-
-              syncHowlerSpeed();
-
-              refreshPitchNode();
+              if (!siteIsBlacklisted) {
+                  await attachHowler();
+                  syncHowlerSpeed();
+                  refreshPitchNode();
+              }
             } catch (e) {
-              log("Howler play hook failed",e);
+              log("Howler play hook failed", e);
             }
           }
         );
@@ -762,11 +859,13 @@
 
           hookHowler();
 
-          attachHowler().catch(
-            (e) => {
-              log("attachHowler failed",e);
-            }
-          );
+          if (!siteIsBlacklisted) {
+            attachHowler().catch(
+              (e) => {
+                log("attachHowler failed", e);
+              }
+            );
+          }
         }
       }, 250);
   }
@@ -796,6 +895,63 @@
           {}),
       };
 
+      // --- Blacklist Check Logic ---
+      const isNowBlacklisted = matchURLPatterns(location.href, settings.blacklistPatterns);
+
+      if (isNowBlacklisted !== siteIsBlacklisted) {
+        siteIsBlacklisted = isNowBlacklisted;
+        log("Blacklist status changed:", siteIsBlacklisted);
+
+        // Switching logic
+        if (siteIsBlacklisted) {
+          // Adding it to the blacklist
+          // 1. Turn off the processor output (pitchNode) to stop processing
+          if (pitchNode) disconnectNodeSafe(pitchNode);
+
+          // 2. Redirect all sources directly to destination
+          // routeMediaElement now uses overlapping connections, so there will be no sound loss
+          connectedMediaElements.forEach(el => {
+            routeMediaElement(el, true);
+            resetMediaSpeed(el);
+          });
+
+          if (usingHowler) {
+            routeHowler(true);
+            resetHowlerSpeed();
+          }
+        } else {
+          // Removing it from the blacklist
+          if (audioCtx && !pitchNode) {
+            await ensurePitchGraph(audioCtx);
+          }
+
+          if (pitchNode && audioCtx) {
+            connectNodeSafe(pitchNode, audioCtx.destination);
+          }
+
+          connectedMediaElements.forEach(el => routeMediaElement(el, false));
+
+          if (usingHowler) {
+            routeHowler(false);
+            syncHowlerSpeed();
+          }
+
+          // FIX: We are trying to connect all media elements that could have been ignored
+          connectAllMedia();
+
+          // If Howler exists but was not connected (because it was in an emergency), connect it
+          if (!usingHowler && window.Howler && window.Howl.ctx) {
+             await attachHowler();
+          }
+
+          if (isNodeReady) {
+            refreshPitchNode();
+          }
+        }
+      }
+
+      if (siteIsBlacklisted) return; 
+
       log(
         "PITCH_UPDATE",
         settings
@@ -803,11 +959,7 @@
 
       if (usingHowler) {
         syncHowlerSpeed();
-
-        routeHowler(false);
-
         refreshPitchNode();
-
         return;
       }
 
@@ -824,6 +976,8 @@
   const observer =
     new MutationObserver(
       (mutations) => {
+        if (siteIsBlacklisted) return; 
+
         for (const mut of mutations) {
           for (const node of mut.addedNodes) {
             if (
@@ -890,7 +1044,8 @@
         (el.tagName !==
           "AUDIO" &&
           el.tagName !==
-          "VIDEO")
+          "VIDEO") ||
+        siteIsBlacklisted
       ) {
         return;
       }
@@ -900,7 +1055,7 @@
           el
         );
       } catch (err) {
-        log("play activation failed",err);
+        log("play activation failed", err);
       }
     },
     true
@@ -920,6 +1075,10 @@
       function (...args) {
         const mediaEl = this;
 
+        if (siteIsBlacklisted) {
+          return originalPlay.apply(mediaEl, args);
+        }
+
         try {
           if (
             mediaEl &&
@@ -934,21 +1093,22 @@
             queueMicrotask(async () => {
               try {
                 await connectMediaElement(mediaEl);
+                
+                if (siteIsBlacklisted) return;
 
                 applySpeedSettings(mediaEl);
-
                 refreshPitchNode();
 
                 log(
                   'Media hooked from play()'
                 );
               } catch (e) {
-                log('play() hook failed',e);
+                log('play() hook failed', e);
               }
             });
           }
         } catch (e) {
-          log('play interception failed',e);
+          log('play interception failed', e);
         }
 
         return originalPlay.apply(

@@ -64,7 +64,7 @@
 
   hookScript.remove();
 
-  // fallback через background.js
+  // fallback via background.js
   if (!injected) {
     try {
       await chrome.runtime.sendMessage({
