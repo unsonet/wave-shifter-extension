@@ -15,9 +15,24 @@ Unlike simple playback-rate controls, Wave Shifter can shift pitch independently
 - 🎥 Works with HTML5 audio and video elements
 - 🚀 Real-time processing using AudioWorklets
 - 🌐 Fully client-side processing
+- 📚 Support for popular libraries (for example [howler.js](https://github.com/goldfire/howler.js))
+- 🚫 Blacklist functionality
 - 🔓 Free and open source
 
+## Demo
+For testing such extensions, it is best to use demo websites where audio and video elements are hidden or encapsulated within third-party libraries such as howler.js. This is the standard behavior for most streaming services.
+
+for example: https://vinylkafka.vercel.app/
+
 ## Installation
+
+### From Store
+
+To install the Chromium version of the extension:
+1. Go to the [marketplace](https://chromewebstore.google.com/detail/wave-shifter-key-tune-pit/niejfkfliccnmakpegpfadmhlgpkoghj) 
+2. Click "Add to Chrome"
+
+Versions for other browsers are not supported yet
 
 ### From Source
 
