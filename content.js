@@ -53,10 +53,7 @@
     };
 
     hookScript.onerror = err => {
-      console.warn(
-        '[PitchShifter] page-hook inject failed, fallback to background',
-        err
-      );
+      console.log('[PitchShifter] page-hook inject failed, fallback to background',err);
 
       resolve(false);
     };

@@ -119,15 +119,10 @@
         ) {
           await ctx.resume();
 
-          log(
-            "AudioContext resumed"
-          );
+          log("AudioContext resumed");
         }
       } catch (e) {
-        warn(
-          "resume failed",
-          e
-        );
+        log("resume failed", e);
       }
     };
 
@@ -519,10 +514,7 @@
 
         howl._rate = rate;
       } catch (e) {
-        warn(
-          "howl.rate failed",
-          e
-        );
+        log("howl.rate failed",e);
       }
 
       const sounds = Array.isArray(
@@ -581,10 +573,7 @@
 
           sound._rate = rate;
         } catch (e) {
-          warn(
-            "sound patch failed",
-            e
-          );
+          log("sound patch failed",e);
         }
       }
     }
@@ -681,10 +670,7 @@
       mediaEl.__pitchConnected =
         false;
 
-      warn(
-        "connectMediaElement failed",
-        e
-      );
+      log("connectMediaElement failed",e);
     } finally {
       connectingMediaElements.delete(
         mediaEl
@@ -739,10 +725,7 @@
 
               refreshPitchNode();
             } catch (e) {
-              warn(
-                "Howler play hook failed",
-                e
-              );
+              log("Howler play hook failed",e);
             }
           }
         );
@@ -781,10 +764,7 @@
 
           attachHowler().catch(
             (e) => {
-              warn(
-                "attachHowler failed",
-                e
-              );
+              log("attachHowler failed",e);
             }
           );
         }
@@ -920,10 +900,7 @@
           el
         );
       } catch (err) {
-        warn(
-          "play activation failed",
-          err
-        );
+        log("play activation failed",err);
       }
     },
     true
@@ -966,18 +943,12 @@
                   'Media hooked from play()'
                 );
               } catch (e) {
-                warn(
-                  'play() hook failed',
-                  e
-                );
+                log('play() hook failed',e);
               }
             });
           }
         } catch (e) {
-          warn(
-            'play interception failed',
-            e
-          );
+          log('play interception failed',e);
         }
 
         return originalPlay.apply(
