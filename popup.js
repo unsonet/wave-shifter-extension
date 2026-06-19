@@ -4,10 +4,17 @@
     pitchValueCents: 0,
     windowSizeMilliseconds: 120,
     applySmartProcessing: true,
+
     speedUnits: 0,
     speedFine: 0,
     preservePitch: true,
-    blacklistPatterns: []
+
+    blacklistPatterns: [],
+
+    toggleState: {
+      pitchSettings: true,
+      speedSettings: true
+    }
   };
 
   const semitonesSlider = document.getElementById('semitones');
@@ -34,8 +41,12 @@
   const blacklistAddBtn = document.getElementById('blacklistAddBtn');
   const blacklistList = document.getElementById('blacklistList');
 
+  const siteStatus = document.getElementById('siteStatus');
   const siteStatusDot = document.getElementById('siteStatusDot');
   const siteStatusText = document.getElementById('siteStatusText');
+
+  const pitchSettingsPanel = document.getElementById('pitchSettingsPanel');
+  const speedSettingsPanel = document.getElementById('speedSettingsPanel');
 
   let currentSettings = await loadSettings();
 
@@ -97,7 +108,7 @@
     return base + fine;
   }
 
-   // --- Optimized Apply with Debounce ---
+  // --- Optimized Apply with Debounce ---
   let saveTimeout;
   function scheduleApply() {
     if (saveTimeout) clearTimeout(saveTimeout);
@@ -126,6 +137,10 @@
 
     speedUnitsVal.textContent = calcSpeedPercentage(currentSettings.speedUnits, 0) + '%';
     speedFineVal.textContent = calcSpeedPercentage(currentSettings.speedUnits, currentSettings.speedFine) + '%';
+
+    pitchSettingsPanel.open = currentSettings.toggleState?.pitchSettings ?? true;
+
+    speedSettingsPanel.open = currentSettings.toggleState?.speedSettings ?? false;
   }
 
   async function applySettings() {
@@ -142,6 +157,8 @@
   }
 
   function closeBlacklistModal() {
+    blacklistBtn.focus();
+
     blacklistModal.classList.remove('open');
     blacklistModal.setAttribute('aria-hidden', 'true');
   }
@@ -209,9 +226,23 @@
 
     const blacklisted = matchURLPatterns(url, currentSettings.blacklistPatterns || []);
 
+    let statusText = blacklisted ? 'inactive' : 'active';
+
     siteStatusDot.classList.remove('active', 'inactive');
-    siteStatusDot.classList.add(blacklisted ? 'inactive' : 'active');
-    siteStatusText.textContent = blacklisted ? 'inactive' : 'active';
+    siteStatusDot.classList.add(statusText);
+    siteStatusText.textContent = statusText;
+    siteStatus.title = statusText;
+  }
+
+  async function saveToggleState() {
+    currentSettings.toggleState = {
+      pitchSettings: pitchSettingsPanel.open,
+      speedSettings: speedSettingsPanel.open
+    };
+
+    await chrome.storage.local.set({
+      pitchSettings: currentSettings
+    });
   }
 
   semitonesSlider.addEventListener('input', async (e) => {
@@ -326,6 +357,9 @@
       closeBlacklistModal();
     }
   });
+
+  pitchSettingsPanel.addEventListener('toggle', saveToggleState);
+  speedSettingsPanel.addEventListener('toggle', saveToggleState);
 
   updateUI();
   renderBlacklistList();
