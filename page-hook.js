@@ -63,6 +63,8 @@
 
   let audioCtx = null;
   let pitchNode = null;
+  let gainNode = null;
+  let limiterNode = null;
   let isNodeReady = false;
 
   let initPromise = null;
@@ -80,6 +82,7 @@
     new WeakSet();
 
   let settings = {
+    volumeBoostDb: 0,
     pitchValueSemitones: 0,
     pitchValueCents: 0,
     windowSizeMilliseconds: 120,
@@ -126,16 +129,16 @@
   // --- Helper to reset speed/pitch to defaults ---
   function resetMediaSpeed(mediaEl) {
     if (!mediaEl) return;
-    
+
     // We reset without performing any checks to return control to the native player or another extension
     mediaEl.playbackRate = 1.0;
     mediaEl.defaultPlaybackRate = 1.0;
     mediaEl.preservesPitch = true;
     if ("webkitPreservesPitch" in mediaEl) mediaEl.webkitPreservesPitch = true;
-    
+
     // Resetting the timestamp so that our action does not trigger the handler
     mediaEl.__lastRateSetByUs = Date.now();
-    
+
     log("resetMediaSpeed applied to", mediaEl);
   }
 
@@ -225,14 +228,11 @@
         }
       );
 
-    pitchNode.port.onmessage = (
-      e
-    ) => {
+    pitchNode.port.onmessage = (e) => {
       const data = e?.data;
 
       if (
-        data &&
-        data[0] === "ready"
+        data && data[0] === "ready"
       ) {
         isNodeReady = true;
 
@@ -242,9 +242,19 @@
       }
     };
 
-    pitchNode.connect(
-      ctx.destination
-    );
+    gainNode = ctx.createGain();
+
+    limiterNode = ctx.createDynamicsCompressor();
+
+    limiterNode.threshold.value = -1;
+    limiterNode.knee.value = 0;
+    limiterNode.ratio.value = 20;
+    limiterNode.attack.value = 0.003;
+    limiterNode.release.value = 0.25;
+
+    pitchNode.connect(gainNode);
+    gainNode.connect(limiterNode);
+    limiterNode.connect(ctx.destination);
 
     log("pitchNode connected");
   }
@@ -262,23 +272,21 @@
     isNodeReady = false;
   }
 
-  async function ensurePitchGraph(
-    ctx
-  ) {
-    if (!ctx) {
-      throw new Error(
-        "No AudioContext"
-      );
-    }
+  async function ensurePitchGraph(ctx) {
+    if (!ctx) throw new Error("No AudioContext");
 
-    if (
-      audioCtx &&
-      audioCtx !== ctx
-    ) {
-      log(
-        "AudioContext changed, rebuilding graph"
-      );
+    if (audioCtx && audioCtx !== ctx) {
+      function destroyPitchGraph() {
+        try { pitchNode?.disconnect(); } catch { }
+        try { gainNode?.disconnect(); } catch { }
+        try { limiterNode?.disconnect(); } catch { }
+        try { pitchNode?.port?.close?.(); } catch { }
 
+        pitchNode = null;
+        gainNode = null;
+        limiterNode = null;
+        isNodeReady = false;
+      }
       destroyPitchGraph();
     }
 
@@ -368,6 +376,14 @@
     );
   }
 
+  function refreshGainNode() {
+    if (!gainNode) return;
+
+    const db = settings.volumeBoostDb || 0;
+
+    gainNode.gain.value = Math.pow(10, db / 20);
+  }
+
   function refreshPitchNode() {
     if (
       !pitchNode ||
@@ -426,14 +442,14 @@
     const rate =
       calcPlaybackRate();
 
-   // FIX: Check for conflicts.
+    // FIX: Check for conflicts.
     // If the speed is already what we need, do not touch the DOM (optimization).
     if (mediaEl.playbackRate === rate && mediaEl.defaultPlaybackRate === rate) {
       // However, you need to update the preservePitch, as it may have changed from the outside.
       const preservePitch = !!settings.preservePitch;
       if (mediaEl.preservesPitch !== preservePitch) {
-         mediaEl.preservesPitch = preservePitch;
-         if ("webkitPreservesPitch" in mediaEl) mediaEl.webkitPreservesPitch = preservePitch;
+        mediaEl.preservesPitch = preservePitch;
+        if ("webkitPreservesPitch" in mediaEl) mediaEl.webkitPreservesPitch = preservePitch;
       }
       return;
     }
@@ -500,75 +516,32 @@
     }
   }
 
-  function routeMediaElement(
-    mediaEl,
-    bypass
-  ) {
-    const source =
-      mediaEl.__pitchSource;
-
-    if (
-      !source ||
-      !audioCtx
-    ) {
-      return;
-    }
-
-    // FIX: We use named connections and disconnections to avoid audio gap
-    if (bypass) {
-        // 1. Connect to Destination (new path)
-        connectNodeSafe(source, audioCtx.destination);
-        
-        // 2. Disconnect from PitchNode (old path), if connected
-        // This creates a crossover, the sound does not disappear
-        if (pitchNode) {
-            try { source.disconnect(pitchNode); } catch(e) {}
-        }
-    } else {
-        // 1. Connect to PitchNode
-        if (pitchNode) {
-            connectNodeSafe(source, pitchNode);
-            
-            // 2. Disconnect from Destination
-            try { source.disconnect(audioCtx.destination); } catch(e) {}
-        }
-    }
-
-    log(
-      "routeMediaElement",
-      {
-        bypass,
+  function routeMediaElement(mediaEl, bypass) {
+    const source = mediaEl.__pitchSource;
+    if (source && audioCtx) {
+      try {
+        source.disconnect()
+      } catch (e) { }
+      if (bypass) {
+        connectNodeSafe(source, gainNode)
+      } else if (pitchNode) {
+        connectNodeSafe(source, pitchNode)
       }
-    );
+    }
   }
 
   function routeHowler(bypass) {
-    const howler =
-      window.Howler;
-
-    if (
-      !howler?.masterGain ||
-      !audioCtx
-    ) {
-      return;
+    const howler = window.Howler;
+    if (howler?.masterGain && audioCtx) {
+      try {
+        howler.masterGain.disconnect()
+      } catch (e) { }
+      if (bypass) {
+        connectNodeSafe(howler.masterGain, gainNode)
+      } else if (pitchNode) {
+        connectNodeSafe(howler.masterGain, pitchNode)
+      }
     }
-    
-    // For Howler, we use the same principle of overlap.
-    if (bypass) {
-        connectNodeSafe(howler.masterGain, audioCtx.destination);
-        if (pitchNode) {
-            try { howler.masterGain.disconnect(pitchNode); } catch(e) {}
-        }
-    } else {
-        if (pitchNode) {
-            connectNodeSafe(howler.masterGain, pitchNode);
-            try { howler.masterGain.disconnect(audioCtx.destination); } catch(e) {}
-        }
-    }
-
-    log("routeHowler", {
-      bypass,
-    });
   }
 
   function syncHowlerSpeed() {
@@ -757,6 +730,7 @@
         true;
 
       refreshPitchNode();
+      refreshGainNode();
 
       log(
         "connectMediaElement success"
@@ -817,9 +791,10 @@
           async () => {
             try {
               if (!siteIsBlacklisted) {
-                  await attachHowler();
-                  syncHowlerSpeed();
-                  refreshPitchNode();
+                await attachHowler();
+                syncHowlerSpeed();
+                refreshPitchNode();
+                refreshGainNode();
               }
             } catch (e) {
               log("Howler play hook failed", e);
@@ -941,7 +916,7 @@
 
           // If Howler exists but was not connected (because it was in an emergency), connect it
           if (!usingHowler && window.Howler && window.Howl.ctx) {
-             await attachHowler();
+            await attachHowler();
           }
 
           if (isNodeReady) {
@@ -950,7 +925,7 @@
         }
       }
 
-      if (siteIsBlacklisted) return; 
+      if (siteIsBlacklisted) return;
 
       log(
         "PITCH_UPDATE",
@@ -960,6 +935,7 @@
       if (usingHowler) {
         syncHowlerSpeed();
         refreshPitchNode();
+        refreshGainNode();
         return;
       }
 
@@ -970,13 +946,14 @@
       );
 
       refreshPitchNode();
+      refreshGainNode();
     }
   );
 
   const observer =
     new MutationObserver(
       (mutations) => {
-        if (siteIsBlacklisted) return; 
+        if (siteIsBlacklisted) return;
 
         for (const mut of mutations) {
           for (const node of mut.addedNodes) {
@@ -1093,11 +1070,12 @@
             queueMicrotask(async () => {
               try {
                 await connectMediaElement(mediaEl);
-                
+
                 if (siteIsBlacklisted) return;
 
                 applySpeedSettings(mediaEl);
                 refreshPitchNode();
+                refreshGainNode();
 
                 log(
                   'Media hooked from play()'

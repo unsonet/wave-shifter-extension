@@ -8,7 +8,8 @@
     speedFine: 0,
     preservePitch: true,
     blacklistPatterns: [],
-    toggleState: { pitchSettings: true, speedSettings: false, eqSettings: false },
+    volumeBoostDb: 0,
+    toggleState: { volumeBoost: true, pitchSettings: true, speedSettings: false, eqSettings: false },
     eqGains: Array(10).fill(50),
     eqPreset: 'flat'
   };
@@ -45,13 +46,18 @@
   const speedSettingsPanel = document.getElementById("speedSettingsPanel");
   const eqSettingsPanel = document.getElementById("eqSettingsPanel");
 
+  const volumeBoostSlider = document.getElementById("volumeBoostDb");
+  const volumeBoostVal = document.getElementById("volumeBoostVal");
+  const volumeBoostPanel = document.getElementById("volumeBoostPanel");
+
   let saveTimeout;
   let currentSettings = await (async function loadSettings() {
     const result = await chrome.storage.local.get("pitchSettings");
+    let defaultSettings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
     return {
-      ...DEFAULT_SETTINGS,
+      ...defaultSettings,
       ...(result.pitchSettings || {}),
-      eqGains: result.pitchSettings?.eqGains || DEFAULT_SETTINGS.eqGains
+      eqGains: result.pitchSettings?.eqGains || defaultSettings.eqGains
     };
   })();
 
@@ -98,10 +104,22 @@
 
     eqPresetSelect.value = currentSettings.eqPreset || 'flat';
 
+    volumeBoostSlider.value = currentSettings.volumeBoostDb;
+    volumeBoostVal.textContent = formatDb(currentSettings.volumeBoostDb);
+
+    volumeBoostPanel.open = currentSettings.toggleState?.volumeBoost ?? true;
+
     // ВАЖНО: Сначала возвращаем реальные значения из памяти в инпуты эквалайзера!
     const eqInputs = document.querySelectorAll('.range-slider[style*="vertical"] input');
     eqInputs.forEach((input, i) => {
-      input.value = currentSettings.eqGains[i] !== undefined ? currentSettings.eqGains[i] : 50;
+      const targetVal = currentSettings.eqGains[i] !== undefined ? currentSettings.eqGains[i] : 50;
+      if (input.value !== String(targetVal)) {
+        input.value = input.min;
+        void input.offsetWidth;
+      }
+
+      input.value = targetVal;
+      syncVisualSlider(input);
     });
 
     // Только потом натягиваем визуальные div-ы на эти значения
@@ -109,6 +127,10 @@
 
     // И рисуем линию
     updateEqualizerGraph();
+  }
+
+  function formatDb(val) {
+    return val > 0 ? `+${val} dB` : `${val} dB`;
   }
 
   // --- ЭКВАЛАЙЗЕР ГРАФИК ---
@@ -162,8 +184,17 @@
   // --- ЛОГИКА СОХРАНЕНИЯ ---
   async function applySettings() {
     await chrome.storage.local.set({ pitchSettings: currentSettings });
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab?.id) chrome.tabs.sendMessage(tab.id, { type: "updateSettings", settings: currentSettings });
+    const [tab] = await chrome.tabs.query({ active: !0, currentWindow: !0 });
+
+    if (tab?.id) {
+      try {
+        await chrome.tabs.sendMessage(tab.id, { type: "updateSettings", settings: currentSettings });
+      } catch (e) {
+        // Игнорируем ошибку, если контент-скрипт не загружен на этой вкладке 
+        // (например, на страницах chrome://, about:, edge:// и т.д.)
+      }
+    }
+
     await refreshSiteStatus();
   }
 
@@ -187,6 +218,7 @@
 
   async function saveToggleState() {
     currentSettings.toggleState = {
+      volumeBoost: volumeBoostPanel.open,
       pitchSettings: pitchSettingsPanel.open,
       speedSettings: speedSettingsPanel.open,
       eqSettings: eqSettingsPanel.open
@@ -209,6 +241,10 @@
       if (id === 'blockSize') { currentSettings.windowSizeMilliseconds = val; blockSizeVal.textContent = val; }
       if (id === 'speedUnits') { currentSettings.speedUnits = val; speedUnitsVal.textContent = calcSpeedPercentage(val, 0) + "%"; }
       if (id === 'speedFine') { currentSettings.speedFine = val; speedFineVal.textContent = calcSpeedPercentage(currentSettings.speedUnits, val) + "%"; }
+      if (id === 'volumeBoostDb') {
+        currentSettings.volumeBoostDb = val;
+        volumeBoostVal.textContent = formatDb(val);
+      }
 
       // Если это EQ слайдер
       if (e.target.orient === 'vertical' || e.target.getAttribute('orient') === 'vertical') {
@@ -243,11 +279,12 @@
   });
 
   resetBtn.addEventListener("click", async () => {
-    currentSettings = { 
-      ...DEFAULT_SETTINGS, 
+    let defaultSettings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+    currentSettings = {
+      ...defaultSettings,
       blacklistPatterns: currentSettings.blacklistPatterns || [],
-      toggleState: currentSettings.toggleState || DEFAULT_SETTINGS.toggleState,
-     };
+      toggleState: currentSettings.toggleState || defaultSettings.toggleState,
+    };
     updateUI();
     renderBlacklistList();
     await applySettings();
@@ -287,7 +324,7 @@
   document.addEventListener("keydown", e => { if (e.key === "Escape" && blacklistModal.classList.contains("open")) closeBlacklistModal(); });
   blacklistModal.addEventListener("click", e => { if (e.target === blacklistModal) closeBlacklistModal(); });
 
-  [pitchSettingsPanel, speedSettingsPanel, eqSettingsPanel].forEach(p => p.addEventListener("toggle", saveToggleState));
+  [volumeBoostPanel, pitchSettingsPanel, speedSettingsPanel, eqSettingsPanel].forEach(p => p.addEventListener("toggle", saveToggleState));
 
   // --- ИНИЦИАЛИЗАЦИЯ ---
   updateUI();

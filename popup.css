@@ -480,7 +480,8 @@ details>.control:last-child {
 }
 
 .range-slider input[type="range"][orient="vertical"] {
-  -webkit-appearance: slider-vertical;
+  writing-mode: vertical-lr;
+  direction: rtl;
   height: 100% !important;
   width: 100% !important;
 }
