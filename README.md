@@ -17,6 +17,7 @@ Unlike simple playback-rate controls, Wave Shifter can shift pitch independently
 - 🌐 Fully client-side processing
 - 📚 Support for popular libraries (for example [howler.js](https://github.com/goldfire/howler.js))
 - 🚫 Blacklist functionality
+- 🎚️ 10-Band Equalizer: Shape your sound with a parametric EQ. 
 - 🔓 Free and open source
 
 ## Demo
