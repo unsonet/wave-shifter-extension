@@ -140,7 +140,6 @@
                 limiterNode.attack.value = 0.003;
                 limiterNode.release.value = 0.25;
 
-                // Строим постоянный граф: pitch -> eq -> gain -> limiter -> destination
                 pitchNode.connect(eqFilters[0]);
                 eqFilters[eqFilters.length - 1].connect(gainNode);
                 gainNode.connect(limiterNode);
@@ -224,8 +223,6 @@
         }
     }
 
-    // ИСПРАВЛЕНО: Подключаем СНАЧАЛА к новой цели, ТОЛЬКО ПОТОМ отключаем от старой.
-    // Это предотвращает микроразрыв графа, из-за которого Chrome навсегда замучивал звук.
     function routeMediaElement(mediaEl, bypass) {
         const source = mediaEl.__pitchSource;
         if (source && audioCtx) {
@@ -241,7 +238,6 @@
         }
     }
 
-    // ИСПРАВЛЕНО: Тот же принцип для Howler.js
     function routeHowler(bypass) {
         const howler = window.Howler;
         if (howler?.masterGain && audioCtx) {
@@ -332,6 +328,38 @@
         }
     }
 
+    // НОВОЕ: Принудительное поддержание скорости (Решает баг с YouTube Shorts)
+    function startSpeedEnforcer() {
+        setInterval(() => {
+            // Не тратим ресурсы, если сайт в черном списке или нет подключенных элементов
+            if (siteIsBlacklisted || connectedMediaElements.size === 0) return;
+            
+            const rate = calcPlaybackRate();
+            // Если скорость стандартная (1x), нет смысла принудительно её применять
+            if (Math.abs(rate - 1.0) < 0.001) return;
+
+            const preservePitch = !!settings.preservePitch;
+            
+            connectedMediaElements.forEach(el => {
+                try {
+                    // Проверяем только те элементы, которые реально воспроизводятся
+                    if (el.paused || el.readyState < 2) return;
+                    
+                    // Если YouTube или другой сайт сбросил скорость, возвращаем её обратно
+                    if (el.playbackRate !== rate) {
+                        el.playbackRate = rate;
+                        el.defaultPlaybackRate = rate;
+                        el.__lastRateSetByUs = Date.now();
+                    }
+                    if (el.preservesPitch !== preservePitch) {
+                        el.preservesPitch = preservePitch;
+                        if ("webkitPreservesPitch" in el) el.webkitPreservesPitch = preservePitch;
+                    }
+                } catch (e) {}
+            });
+        }, 250); // Проверяем 4 раза в секунду — незаметно для глаз, но достаточно быстро для аудио
+    }
+
     window.addEventListener("message", async e => {
         if (e.source !== window) return;
         const data = e.data;
@@ -339,7 +367,6 @@
 
         settings = { ...settings, ...data.settings || {} };
 
-        // ИСПРАВЛЕНО: Защита от кривых регулярных выражений в черном списке
         let isNowBlacklisted = false;
         try {
             isNowBlacklisted = function matchURLPatterns(url, urlPatterns) {
@@ -359,8 +386,6 @@
             siteIsBlacklisted = isNowBlacklisted;
 
             if (siteIsBlacklisted) {
-                // ИСПРАВЛЕНО: Мы больше НЕ разрушаем внутренний граф (pitchNode -> eq -> gain -> limiter).
-                // Мы просто перенаправляем звук напрямую в колонки в обход наших фильтров.
                 connectedMediaElements.forEach(el => {
                     routeMediaElement(el, true);
                     try {
@@ -393,13 +418,10 @@
                     } catch (e) {}
                 }
             } else {
-                // ВОЗВРАТ ИЗ ЧЕРНОГО СПИСКА
                 if (audioCtx && !pitchNode) {
                     await ensurePitchGraph(audioCtx);
                 }
                 
-                // ИСПРАВЛЕНО: Раньше здесь было подключение pitchNode напрямую к destination, 
-                // из-за чего игнорировались EQ, громкость и лимитер. Теперь возвращаем в нормальный граф.
                 connectedMediaElements.forEach(el => routeMediaElement(el, false));
                 
                 if (usingHowler) {
@@ -413,7 +435,6 @@
                 connectedMediaElements.forEach(el => applySpeedSettings(el));
             }
         } else if (!siteIsBlacklisted) {
-            // Обычное изменение настроек (не черного списка)
             if (usingHowler) {
                 syncHowlerSpeed();
             } else {
@@ -528,4 +549,5 @@
     }
 
     probeHowler();
+    startSpeedEnforcer();
 })();
