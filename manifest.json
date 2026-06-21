@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Wave Shifter - key, tune, pitch, speed, tempo, volume, equalizer - all-in-one",
+  "name": "Wave Shifter - key, tune, pitch, speed, tempo, volume, EQ - all-in-one",
   "short_name": "Wave Shifter",
   "description": "Ultimate real-time audio enhancer: pitch shift, EQ, volume boost & speed control for videos and music on any website.",
   "author": "Unsonet <https://github.com/Unsonet>",

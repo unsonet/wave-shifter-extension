@@ -27,18 +27,18 @@
   };
 
   // DOM fallback config
-  let meta = document.getElementById('__pitchShifterCfg');
-
-  if (!meta) {
-    meta = document.createElement('meta');
-    meta.id = '__pitchShifterCfg';
-
-    (document.head || document.documentElement)
-      .appendChild(meta);
+  try {
+    let meta = document.getElementById("__pitchShifterCfg");
+    if (!meta) {
+      meta = document.createElement("meta");
+      meta.id = "__pitchShifterCfg";
+      (document.head || document.documentElement).appendChild(meta);
+    }
+    meta.dataset.workletUrl = workletUrl;
+    meta.dataset.initialSettings = JSON.stringify(pitchSettings);
+  } catch (e) {
+    console.log(e);
   }
-
-  meta.dataset.workletUrl = workletUrl;
-  meta.dataset.initialSettings = JSON.stringify(pitchSettings);
 
   // inject page-hook.js into MAIN world
   const hookScript = document.createElement('script');
@@ -53,7 +53,7 @@
     };
 
     hookScript.onerror = err => {
-      console.log('[PitchShifter] page-hook inject failed, fallback to background',err);
+      console.log('[PitchShifter] page-hook inject failed, fallback to background', err);
 
       resolve(false);
     };
