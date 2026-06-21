@@ -11,15 +11,15 @@
   <details id="volumeBoostPanel" open>
     <summary>Volume</summary>
     <div class="control">
-        <label>Gain: <span id="volumeBoostVal">0 dB</span></label>
-        <div class="range-slider" style="--orientation: horizontal;">
-            <input type="range" id="volumeBoostDb" min="-24" max="24" step="0.5" value="0">
-            <div class="range-slider__track"></div>
-            <div class="range-slider__bar"></div>
-            <div class="range-slider__thumb"></div>
-        </div>
+      <label>Gain: <span id="volumeBoostVal">0 dB</span></label>
+      <div class="range-slider" style="--orientation: horizontal;">
+        <input type="range" id="volumeBoostDb" min="-24" max="24" step="0.5" value="0">
+        <div class="range-slider__track"></div>
+        <div class="range-slider__bar"></div>
+        <div class="range-slider__thumb"></div>
+      </div>
     </div>
-</details>
+  </details>
   <details id="pitchSettingsPanel">
     <summary>Pitch</summary>
     <div class="control">
@@ -77,7 +77,7 @@
 
   <details id="eqSettingsPanel">
     <summary>Equalizer</summary>
-    <div class="eq-presets">
+    <div class="eq-presets" style="display:flex;gap:8px;align-items:center;">
       <select id="eqPreset">
         <option value="flat">Flat</option>
         <option value="rock">Rock</option>
@@ -85,6 +85,7 @@
         <option value="classical">Classical</option>
         <option value="bass">Bass Boost</option>
       </select>
+      <button id="managePresetsBtn" class="btn-vk link" type="button">Manage</button>
     </div>
     <div class="eq-container">
       <svg class="eq-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
@@ -151,20 +152,33 @@
     <div id="siteStatus"><span id="siteStatusDot"></span><span id="siteStatusText">active</span></div>
   </div>
 
-  <div id="blacklistModal" class="blacklist-modal" aria-hidden="true">
-    <div class="blacklist-modal__backdrop" id="blacklistModalClose"></div>
-    <div class="blacklist-modal__panel">
-      <div class="blacklist-modal__header">
-        <div style="font-weight:600;">Blacklist</div>
-        <button id="blacklistModalCloseBtn" type="button">×</button>
+  <!-- Blacklist Modal -->
+  <div id="blacklistModal" class="simple-modal" aria-hidden="true">
+    <div class="simple-modal__backdrop" id="blacklistModalClose"></div>
+    <div class="simple-modal__panel">
+      <div class="simple-modal__header">
+        <div style="font-weight:600;">Blacklist</div><button id="blacklistModalCloseBtn" type="button">×</button>
       </div>
-      <div class="blacklist-modal__add">
-        <input id="blacklistInput" type="text" placeholder="https://www.youtube.com/*" spellcheck="false" />
-        <button id="blacklistAddBtn" class="btn-vk" type="button">Add</button>
-      </div>
+      <div class="simple-modal__add"><input id="blacklistInput" type="text" placeholder="https://www.youtube.com/*" spellcheck="false" /><button id="blacklistAddBtn" class="btn-vk" type="button">Add</button></div>
       <div id="blacklistList" class="blacklist-list"></div>
     </div>
   </div>
+
+  <!-- Presets Modal -->
+  <div id="presetModal" class="simple-modal" aria-hidden="true">
+    <div class="simple-modal__backdrop" id="presetModalClose"></div>
+    <div class="simple-modal__panel">
+      <div class="simple-modal__header">
+        <div style="font-weight:600;">Equalizer Presets</div><button id="presetModalCloseBtn" type="button">×</button>
+      </div>
+      <div class="simple-modal__add" style="flex-wrap:wrap;gap:6px;">
+        <input id="presetNameInput" type="text" placeholder="Preset name" spellcheck="false" style="flex:1;min-width:100px;" /><input id="presetGenresInput" type="text" placeholder="Genres (rock, pop)" spellcheck="false" style="flex:1;min-width:100px;" />
+        <button id="presetAddBtn" class="btn-vk" type="button">Save Current</button>
+      </div>
+      <div id="presetList" class="blacklist-list"></div>
+    </div>
+  </div>
+
   <script src="popup.js"></script>
 </body>
 

@@ -40,7 +40,7 @@ label {
 }
 
 button {
-  --btn-vk-height:1.25rem!important;
+  --btn-vk-height: 1.25rem !important;
   --bs-btn-bg: #683ba8;
   --bs-btn-border-color: #683ba8;
   --bs-btn-color: #fff;
@@ -256,24 +256,24 @@ input[type=radio] {
 /*end Chrome 81 - Checkbox & Radio Styling*/
 
 /*blacklist*/
-.blacklist-modal {
+.simple-modal {
   position: fixed;
   inset: 0;
   display: none;
   z-index: 999999;
 }
 
-.blacklist-modal.open {
+.simple-modal.open {
   display: block;
 }
 
-.blacklist-modal__backdrop {
+.simple-modal__backdrop {
   position: absolute;
   inset: 0;
   background: rgba(0, 0, 0, 0.55);
 }
 
-.blacklist-modal__panel {
+.simple-modal__panel {
   position: relative;
   width: min(720px, calc(100vw - 24px));
   height: min(100vh, calc(100vh - 24px));
@@ -287,13 +287,13 @@ input[type=radio] {
   gap: 12px;
 }
 
-.blacklist-modal__header {
+.simple-modal__header {
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 
-.blacklist-modal__header button {
+.simple-modal__header button {
   width: 34px;
   height: 34px;
   border-radius: 10px;
@@ -304,12 +304,16 @@ input[type=radio] {
   line-height: 1;
 }
 
-.blacklist-modal__add {
+.simple-modal__add {
   display: flex;
   gap: 8px;
 }
 
-.blacklist-modal__add input {
+.simple-modal__add input {
+  border: 0px;
+  border-radius: 0.375rem;
+  padding: 8px;
+  outline: none;
   flex: 1;
 }
 
@@ -322,15 +326,17 @@ input[type=radio] {
 }
 
 .blacklist-item {
+  position: relative;
   display: flex;
   gap: 8px;
   align-items: center;
-  padding: 10px;
-  border-radius: 12px;
+  padding: 8px 25px 8px 8px;
+  border-radius: 0.375rem;
   background: #3b2b53;
 }
 
 .blacklist-item input {
+  outline: none;
   color: #fff;
   border: none !important;
   background: transparent;
@@ -339,9 +345,12 @@ input[type=radio] {
 }
 
 .blacklist-item button {
+  padding: 0 5px;
   width: 100%;
   max-width: max-content;
   white-space: nowrap;
+  position: absolute;
+  right: 5px;
 }
 
 /*end blacklist*/
@@ -350,7 +359,7 @@ input[type=radio] {
 /*details*/
 details {
   background: #2b2b42;
-  border-radius: 8px;
+  border-radius: 0.375rem;
   margin-bottom: 8px;
   overflow: hidden;
 }
@@ -642,11 +651,12 @@ details>.control:last-child {
 }
 
 #eqSettingsPanel .eq-presets select {
+  outline: none;
   flex: 1;
   background: #2b2b42;
   color: #eee;
   border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 6px;
+  border-radius: 0.375rem;
   padding: 4px 8px;
   font-size: 12px;
   cursor: pointer;
@@ -686,3 +696,26 @@ details>.control:last-child {
 }
 
 /*end eq*/
+
+.btn-vk.link {
+  font-size: inherit;
+  background: none!important;
+  border: none!important;
+  color: #fff;
+  width: auto;
+  padding: 1px 8px;
+}
+
+.btn-vk.link:hover {
+  background: none!important;
+  border: none!important;
+}
+
+.btn-vk.link:focus {
+  background: none!important;
+  border: none!important;
+}
+
+.btn-vk.secondary{
+  color: #fff;
+}

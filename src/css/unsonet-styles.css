@@ -120,7 +120,7 @@
   border-top: 1px solid rgba(0, 0, 0, 0) !important;
   border-bottom: 1px solid rgba(0, 0, 0, 0) !important;
   background-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.1));
-  line-height: 1.6rem;
+  line-height: calc(var(--btn-vk-height) + 0.1rem);
   background-color: var(--bs-btn-bg) !important;
   border-color: var(--bs-btn-border-color) !important;
 }
@@ -145,11 +145,14 @@
   border-top: none;
   border-bottom: none;
   background-image: none;
+  border: none !important;
+  line-height: var(--btn-vk-height) !important;
 }
 
 .btn-vk.disabled:active,
 .btn-vk.link:active {
-  line-height: inherit;
+  border: none !important;
+  line-height: var(--btn-vk-height) !important;
 }
 
 /*Skeleton*/
