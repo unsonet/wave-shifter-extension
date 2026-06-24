@@ -1,185 +1,144 @@
 <!DOCTYPE html>
 <html>
-
 <head>
-  <meta charset="utf-8">
-  <link rel="stylesheet" type="text/css" href="src/css/unsonet-styles.css" />
-  <link rel="stylesheet" type="text/css" href="popup.css" />
+    <meta charset="utf-8">
+    <link rel="stylesheet" type="text/css" href="src/css/unsonet-styles.css" />
+    <link rel="stylesheet" type="text/css" href="popup.css" />
 </head>
-
 <body>
-  <details id="volumeBoostPanel" open>
-    <summary>Volume</summary>
-    <div class="control">
-      <label>Gain: <span id="volumeBoostVal">0 dB</span></label>
-      <div class="range-slider" style="--orientation: horizontal;">
-        <input type="range" id="volumeBoostDb" min="-24" max="24" step="0.5" value="0">
-        <div class="range-slider__track"></div>
-        <div class="range-slider__bar"></div>
-        <div class="range-slider__thumb"></div>
-      </div>
+    <details id="volumeBoostPanel" open>
+        <summary>
+            <div class="summary-container">
+                <span>Volume</span>
+                <div class="reset-icon" data-section="#volumeBoostPanel"></div>
+            </div>
+        </summary>
+        <div class="control">
+            <label>Gain: <span id="volumeBoostVal">0 dB</span></label>
+            <div class="range-slider" style="--orientation: horizontal;">
+                <input type="range" id="volumeBoostDb" min="-24" max="24" step="0.5" value="0">
+                <div class="range-slider__track"></div>
+                <div class="range-slider__bar"></div>
+                <div class="range-slider__thumb"></div>
+            </div>
+        </div>
+    </details>
+    <details id="pitchSettingsPanel">
+        <summary>
+            <div class="summary-container">
+                <span>Pitch</span>
+                <div class="reset-icon" data-section="#pitchSettingsPanel"></div>
+            </div>
+        </summary>
+        <div class="control">
+            <label>Pitch Shift (semitones): <span id="semitonesVal">0</span></label>
+            <div class="range-slider" style="--orientation: horizontal;">
+                <input type="range" id="semitones" min="-12" max="12" step="1" value="0">
+                <div class="range-slider__track"></div>
+                <div class="range-slider__bar"></div>
+                <div class="range-slider__thumb"></div>
+            </div>
+        </div>
+        <div class="control">
+            <label>Pitch Fine Shifting (cents): <span id="centsVal">0</span></label>
+            <div class="range-slider" style="--orientation: horizontal;">
+                <input type="range" id="cents" min="-50" max="50" step="1" value="0">
+                <div class="range-slider__track"></div>
+                <div class="range-slider__bar"></div>
+                <div class="range-slider__thumb"></div>
+            </div>
+        </div>
+        <div class="control">
+            <label>Block Size (ms): <span id="blockSizeVal">120</span></label>
+            <div class="range-slider" style="--orientation: horizontal;">
+                <input type="range" id="blockSize" min="20" max="150" step="5" value="120">
+                <div class="range-slider__track"></div>
+                <div class="range-slider__bar"></div>
+                <div class="range-slider__thumb"></div>
+            </div>
+        </div>
+        <div class="row">
+            <input type="checkbox" id="smartProcessing" checked>
+            <label>Smart processing</label>
+        </div>
+    </details>
+    <details id="speedSettingsPanel">
+        <summary>
+            <div class="summary-container">
+                <span>Speed</span>
+                <div class="reset-icon" data-section="#speedSettingsPanel"></div>
+            </div>
+        </summary>
+        <div class="control">
+            <label>Speed Shift: <span id="speedUnitsVal">100%</span></label>
+            <div class="range-slider" style="--orientation: horizontal;">
+                <input type="range" id="speedUnits" min="-75" max="60" step="1" value="0">
+                <div class="range-slider__track"></div>
+                <div class="range-slider__bar"></div>
+                <div class="range-slider__thumb"></div>
+            </div>
+        </div>
+        <div class="control">
+            <label>Speed Fine Shifting: <span id="speedFineVal">100%</span></label>
+            <div class="range-slider" style="--orientation: horizontal;">
+                <input type="range" id="speedFine" min="-5" max="5" step="1" value="0">
+                <div class="range-slider__track"></div>
+                <div class="range-slider__bar"></div>
+                <div class="range-slider__thumb"></div>
+            </div>
+        </div>
+        <div class="row">
+            <input type="checkbox" id="preservePitch" checked>
+            <label>Preserve pitch</label>
+        </div>
+    </details>
+    <details id="eqSettingsPanel">
+        <summary>
+            <div class="summary-container">
+                <span>Equalizer</span>
+                <div class="reset-icon" data-section="#eqSettingsPanel"></div>
+            </div>
+        </summary>
+        <div class="eq-presets" style="display:flex;gap:8px;align-items:center;">
+            <select id="eqPreset">
+                <option value="flat">Flat</option>
+                <option value="rock">Rock</option>
+                <option value="pop">Pop</option>
+                <option value="classical">Classical</option>
+                <option value="bass">Bass Boost</option>
+            </select>
+            <button id="managePresetsBtn" class="btn-vk link" type="button">Manage</button>
+        </div>
+        <div class="eq-row">
+        <div class="eq-container">
+            <svg class="eq-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
+                <path class="eq-svg-line-shadow" d=""></path>
+                <path class="eq-svg-line" d=""></path>
+            </svg>
+            <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50"><div class="range-slider__track"></div><div class="range-slider__bar"></div><div class="range-slider__thumb"></div></div>
+            <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50"><div class="range-slider__track"></div><div class="range-slider__bar"></div><div class="range-slider__thumb"></div></div>
+            <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50"><div class="range-slider__track"></div><div class="range-slider__bar"></div><div class="range-slider__thumb"></div></div>
+            <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50"><div class="range-slider__track"></div><div class="range-slider__bar"></div><div class="range-slider__thumb"></div></div>
+            <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50"><div class="range-slider__track"></div><div class="range-slider__bar"></div><div class="range-slider__thumb"></div></div>
+            <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50"><div class="range-slider__track"></div><div class="range-slider__bar"></div><div class="range-slider__thumb"></div></div>
+            <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50"><div class="range-slider__track"></div><div class="range-slider__bar"></div><div class="range-slider__thumb"></div></div>
+            <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50"><div class="range-slider__track"></div><div class="range-slider__bar"></div><div class="range-slider__thumb"></div></div>
+            <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50"><div class="range-slider__track"></div><div class="range-slider__bar"></div><div class="range-slider__thumb"></div></div>
+            <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50"><div class="range-slider__track"></div><div class="range-slider__bar"></div><div class="range-slider__thumb"></div></div>
+        </div>
+        </div>
+    </details>
+    <div class="row">
+        <input type="checkbox" id="optimisationDelay">
+        <label>Optimization delay</label>
     </div>
-  </details>
-  <details id="pitchSettingsPanel">
-    <summary>Pitch</summary>
-    <div class="control">
-      <label>Pitch Shift (semitones): <span id="semitonesVal">0</span></label>
-      <div class="range-slider" style="--orientation: horizontal;">
-        <input type="range" id="semitones" min="-12" max="12" step="1" value="0">
-        <div class="range-slider__track"></div>
-        <div class="range-slider__bar"></div>
-        <div class="range-slider__thumb"></div>
-      </div>
+    <div class="row row-buttons">
+        <button id="blacklistBtn" class="btn-vk" type="button">Blacklist</button>
+        <button id="resetBtn" class="btn-vk" type="button">Reset</button>
+        <div id="siteStatus"><span id="siteStatusDot"></span><span id="siteStatusText">active</span></div>
     </div>
-    <div class="control">
-      <label>Pitch Fine Shifting (cents): <span id="centsVal">0</span></label>
-      <div class="range-slider" style="--orientation: horizontal;">
-        <input type="range" id="cents" min="-50" max="50" step="1" value="0">
-        <div class="range-slider__track"></div>
-        <div class="range-slider__bar"></div>
-        <div class="range-slider__thumb"></div>
-      </div>
-    </div>
-    <div class="control">
-      <label>Block Size (ms): <span id="blockSizeVal">120</span></label>
-      <div class="range-slider" style="--orientation: horizontal;">
-        <input type="range" id="blockSize" min="20" max="150" step="5" value="120">
-        <div class="range-slider__track"></div>
-        <div class="range-slider__bar"></div>
-        <div class="range-slider__thumb"></div>
-      </div>
-    </div>
-    <div class="row"><input type="checkbox" id="smartProcessing" checked><label>Smart processing</label></div>
-  </details>
-
-  <details id="speedSettingsPanel">
-    <summary>Speed</summary>
-    <div class="control">
-      <label>Speed Shift: <span id="speedUnitsVal">100%</span></label>
-      <div class="range-slider" style="--orientation: horizontal;">
-        <input type="range" id="speedUnits" min="-75" max="60" step="1" value="0">
-        <div class="range-slider__track"></div>
-        <div class="range-slider__bar"></div>
-        <div class="range-slider__thumb"></div>
-      </div>
-    </div>
-    <div class="control">
-      <label>Speed Fine Shifting: <span id="speedFineVal">100%</span></label>
-      <div class="range-slider" style="--orientation: horizontal;">
-        <input type="range" id="speedFine" min="-5" max="5" step="1" value="0">
-        <div class="range-slider__track"></div>
-        <div class="range-slider__bar"></div>
-        <div class="range-slider__thumb"></div>
-      </div>
-    </div>
-    <div class="row"><input type="checkbox" id="preservePitch" checked><label>Preserve Pitch</label></div>
-  </details>
-
-  <details id="eqSettingsPanel">
-    <summary>Equalizer</summary>
-    <div class="eq-presets" style="display:flex;gap:8px;align-items:center;">
-      <select id="eqPreset">
-        <option value="flat">Flat</option>
-        <option value="rock">Rock</option>
-        <option value="pop">Pop</option>
-        <option value="classical">Classical</option>
-        <option value="bass">Bass Boost</option>
-      </select>
-      <button id="managePresetsBtn" class="btn-vk link" type="button">Manage</button>
-    </div>
-    <div class="eq-container">
-      <svg class="eq-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
-        <path class="eq-svg-line-shadow" d=""></path>
-        <path class="eq-svg-line" d=""></path>
-      </svg>
-
-      <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50">
-        <div class="range-slider__track"></div>
-        <div class="range-slider__bar"></div>
-        <div class="range-slider__thumb"></div>
-      </div>
-      <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50">
-        <div class="range-slider__track"></div>
-        <div class="range-slider__bar"></div>
-        <div class="range-slider__thumb"></div>
-      </div>
-      <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50">
-        <div class="range-slider__track"></div>
-        <div class="range-slider__bar"></div>
-        <div class="range-slider__thumb"></div>
-      </div>
-      <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50">
-        <div class="range-slider__track"></div>
-        <div class="range-slider__bar"></div>
-        <div class="range-slider__thumb"></div>
-      </div>
-      <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50">
-        <div class="range-slider__track"></div>
-        <div class="range-slider__bar"></div>
-        <div class="range-slider__thumb"></div>
-      </div>
-      <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50">
-        <div class="range-slider__track"></div>
-        <div class="range-slider__bar"></div>
-        <div class="range-slider__thumb"></div>
-      </div>
-      <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50">
-        <div class="range-slider__track"></div>
-        <div class="range-slider__bar"></div>
-        <div class="range-slider__thumb"></div>
-      </div>
-      <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50">
-        <div class="range-slider__track"></div>
-        <div class="range-slider__bar"></div>
-        <div class="range-slider__thumb"></div>
-      </div>
-      <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50">
-        <div class="range-slider__track"></div>
-        <div class="range-slider__bar"></div>
-        <div class="range-slider__thumb"></div>
-      </div>
-      <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50">
-        <div class="range-slider__track"></div>
-        <div class="range-slider__bar"></div>
-        <div class="range-slider__thumb"></div>
-      </div>
-    </div>
-  </details>
-
-  <div class="row row-buttons">
-    <button id="blacklistBtn" class="btn-vk" type="button">Blacklist</button>
-    <button id="resetBtn" class="btn-vk" type="button">Reset</button>
-    <div id="siteStatus"><span id="siteStatusDot"></span><span id="siteStatusText">active</span></div>
-  </div>
-
-  <!-- Blacklist Modal -->
-  <div id="blacklistModal" class="simple-modal" aria-hidden="true">
-    <div class="simple-modal__backdrop" id="blacklistModalClose"></div>
-    <div class="simple-modal__panel">
-      <div class="simple-modal__header">
-        <div style="font-weight:600;">Blacklist</div><button id="blacklistModalCloseBtn" type="button">×</button>
-      </div>
-      <div class="simple-modal__add"><input id="blacklistInput" type="text" placeholder="https://www.youtube.com/*" spellcheck="false" /><button id="blacklistAddBtn" class="btn-vk" type="button">Add</button></div>
-      <div id="blacklistList" class="blacklist-list"></div>
-    </div>
-  </div>
-
-  <!-- Presets Modal -->
-  <div id="presetModal" class="simple-modal" aria-hidden="true">
-    <div class="simple-modal__backdrop" id="presetModalClose"></div>
-    <div class="simple-modal__panel">
-      <div class="simple-modal__header">
-        <div style="font-weight:600;">Equalizer Presets</div><button id="presetModalCloseBtn" type="button">×</button>
-      </div>
-      <div class="simple-modal__add" style="flex-wrap:wrap;gap:6px;">
-        <input id="presetNameInput" type="text" placeholder="Preset name" spellcheck="false" style="flex:1;min-width:100px;" /><input id="presetGenresInput" type="text" placeholder="Genres (rock, pop)" spellcheck="false" style="flex:1;min-width:100px;" />
-        <button id="presetAddBtn" class="btn-vk" type="button">Save Current</button>
-      </div>
-      <div id="presetList" class="blacklist-list"></div>
-    </div>
-  </div>
-
-  <script src="popup.js"></script>
+    <div id="blacklistModal" class="simple-modal" aria-hidden="true"><div class="simple-modal__backdrop" id="blacklistModalClose"></div><div class="simple-modal__panel"><div class="simple-modal__header"><div style="font-weight:600;">Blacklist</div><button id="blacklistModalCloseBtn" type="button">×</button></div><div class="simple-modal__add"><input id="blacklistInput" type="text" placeholder="https://www.youtube.com/*" spellcheck="false" /><button id="blacklistAddBtn" class="btn-vk" type="button">Add</button></div><div id="blacklistList" class="blacklist-list"></div></div></div>
+    <div id="presetModal" class="simple-modal" aria-hidden="true"><div class="simple-modal__backdrop" id="presetModalClose"></div><div class="simple-modal__panel"><div class="simple-modal__header"><div style="font-weight:600;">Equalizer Presets</div><button id="presetModalCloseBtn" type="button">×</button></div><div class="simple-modal__add" style="flex-wrap:wrap;gap:6px;"><input id="presetNameInput" type="text" placeholder="Preset name" spellcheck="false" style="flex:1;min-width:100px;" /><input id="presetGenresInput" type="text" placeholder="Genres (rock, pop)" spellcheck="false" style="flex:1;min-width:100px;" /><button id="presetAddBtn" class="btn-vk" type="button">Save Current</button></div><div id="presetList" class="blacklist-list"></div></div></div>
+    <script src="popup.js"></script>
 </body>
-
 </html>

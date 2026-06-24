@@ -5,7 +5,7 @@
   "description": "Ultimate real-time audio enhancer: pitch shift, EQ, volume boost & speed control for videos and music on any website.",
   "author": "Unsonet <https://github.com/Unsonet>",
   "homepage_url": "https://unsonet.onrender.com/",
-  "version": "1.3",
+  "version": "1.4",
   "permissions": [
     "storage",
     "declarativeNetRequest",
