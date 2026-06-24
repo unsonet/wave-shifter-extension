@@ -117,6 +117,21 @@
         }
     }
 
+    // ИСПРАВЛЕНИЕ: Вернул безопасный роутинг для Howler
+    function routeHowler(bypass) {
+        const howler = window.Howler;
+        if (howler?.masterGain && audioCtx) {
+            if (bypass) {
+                connectNodeSafe(howler.masterGain, audioCtx.destination);
+                try { howler.masterGain.disconnect(pitchNode); } catch (e) {}
+            } else if (pitchNode) {
+                connectNodeSafe(howler.masterGain, pitchNode);
+                // ВАЖНО: Отключаем от прямого выхода, иначе будет двойной звук!
+                try { howler.masterGain.disconnect(audioCtx.destination); } catch (e) {}
+            }
+        }
+    }
+
     async function attachHowler() {
         if (siteIsBlacklisted) return false;
         const howler = window.Howler;
@@ -125,11 +140,9 @@
         usingHowler = true;
         bindResumeHandlers(howler.ctx);
         await ensurePitchGraph(howler.ctx);
-        if (!howlerAttached) {
-            howlerAttached = true;
-            howler.masterGain.connect(pitchNode);
-        }
+        if (!howlerAttached) howlerAttached = true;
         
+        routeHowler(false); // Используем правильный роутинг
         syncHowlerSpeed();
         refreshPitchNode();
         refreshEqualizer();
@@ -216,7 +229,7 @@
         const howls = Array.isArray(howler._howls) ? howler._howls : [];
         for (const howl of howls) {
             try { if (typeof howl.rate === "function") howl.rate(rate); howl._rate = rate; } catch (e) {}
-            const sounds = Array.isArray(howl._sounds) ? howl._sounds : [];
+            const sounds = Array.isArray(howler._sounds) ? howl._sounds : [];
             for (const sound of sounds) {
                 try {
                     const node = sound?._node; if (!node) continue;
@@ -292,21 +305,12 @@
         if (isNowBlacklisted !== siteIsBlacklisted) {
             siteIsBlacklisted = isNowBlacklisted;
             if (siteIsBlacklisted) {
-                // НОВОЕ РЕШЕНИЕ: "Пассивный микрофон". 
-                // Мы НЕ отсоединяем аудио-провода. Мы просто делаем звук внутри графа "прозрачным".
-                
-                // 1. Мгновенный сброс питча до 0 (без обрыва)
                 if (pitchNode && isNodeReady) {
                     pitchNode.port.postMessage([null, "start", { active: true, semitones: 0, tonalityHz: 8800 }]);
                 }
-
-                // 2. Убираем накрутку громкости (ставим 0 децибел)
                 if (gainNode) gainNode.gain.value = 1;
-
-                // 3. Делаем эквалайзер абсолютно плоским
                 eqFilters.forEach(f => { f.gain.value = 0; });
 
-                // 4. Возвращаем стандартную скорость элементам
                 connectedMediaElements.forEach(el => {
                     try {
                         el.playbackRate = 1; el.defaultPlaybackRate = 1;
@@ -316,14 +320,14 @@
                     } catch (e) {}
                 });
 
-                // 5. Возвращаем стандартную скорость Howler
                 if (usingHowler) {
+                    routeHowler(true); // Безопасно возвращаем на прямый выход
                     const howler = window.Howler;
                     if (howler) {
                         const howls = Array.isArray(howler._howls) ? howler._howls : [];
                         for (const howl of howls) {
                             try { if (typeof howl.rate === "function") howl.rate(1); howl._rate = 1; } catch (e) {}
-                            const sounds = Array.isArray(howl._sounds) ? howl._sounds : [];
+                            const sounds = Array.isArray(howler._sounds) ? howl._sounds : [];
                             for (const sound of sounds) {
                                 sound._rate = 1;
                                 const node = sound?._node;
@@ -334,24 +338,32 @@
                     }
                 }
             } else {
-                // ВОССТАНОВЛЕНИЕ: Просто возвращаем реальные настройки. Звук никуда не девался!
-                
-                // 1. Сразу применяем скорости
-                connectedMediaElements.forEach(el => applySpeedSettings(el));
-                if (usingHowler) syncHowlerSpeed();
-
-                // 2. Инициализируем новые элементы, если они появились, пока был включен ЧС
-                await Promise.all(Array.from(document.querySelectorAll("audio, video")).map(el => {
-                    if (!el.__pitchSource) return connectMediaElement(el);
-                    return Promise.resolve();
-                }));
-
-                if (window.Howler) await attachHowler();
-
-                // 3. Возвращаем обработку (питч, экв, громкость)
                 refreshPitchNode();
                 refreshEqualizer();
                 refreshGainNode();
+
+                connectedMediaElements.forEach(el => applySpeedSettings(el));
+                if (usingHowler) syncHowlerSpeed();
+
+                const mediaElements = Array.from(document.querySelectorAll("audio, video"));
+                for (const el of mediaElements) {
+                    if (!el.__pitchSource) {
+                        if (!el.paused) {
+                            try {
+                                const rate = calcPlaybackRate();
+                                el.playbackRate = rate;
+                                el.defaultPlaybackRate = rate;
+                                el.preservesPitch = !!settings.preservePitch;
+                                if ("webkitPreservesPitch" in el) el.webkitPreservesPitch = !!settings.preservePitch;
+                                el.__lastRateSetByUs = Date.now();
+                            } catch(e) {}
+                        } else {
+                            await connectMediaElement(el);
+                        }
+                    }
+                }
+
+                if (window.Howler) await attachHowler();
             }
         } else if (!siteIsBlacklisted) {
             if (usingHowler) syncHowlerSpeed();

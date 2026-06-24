@@ -14,7 +14,6 @@
         eqPreset: "flat"
     };
 
-    // Связь data-section атрибута с ключами настроек для умного ресета
     const SECTION_DEFAULTS = {
         '#volumeBoostPanel': { volumeBoostDb: DEFAULT_SETTINGS.volumeBoostDb },
         '#pitchSettingsPanel': { 
@@ -42,7 +41,6 @@
         bass: { name: "Bass Boost", genres: ["bass", "hip-hop"], values: [80, 75, 65, 55, 50, 50, 50, 50, 50, 50] }
     };
 
-    // DOM Elements
     const semitonesSlider = document.getElementById("semitones");
     const centsSlider = document.getElementById("cents");
     const blockSizeSlider = document.getElementById("blockSize");
@@ -111,19 +109,24 @@
 
     let applyTimeout = null;
     async function scheduleApply() {
-        const useDelay = currentSettings.optimisationDelay !== undefined ? currentSettings.optimisationDelay : true;
-        if (useDelay) {
+        if (currentSettings.optimisationDelay) {
+            // Режим жесткой оптимизации: ждем 150мс после остановки ползунка
             if (applyTimeout) clearTimeout(applyTimeout);
             applyTimeout = setTimeout(async () => { applyTimeout = null; await applySettings(); }, 150);
         } else {
-            await applySettings();
+            // ИДЕАЛЬНО ПЛАВНЫЙ РЕЖИМ: Троттлинг 16мс (ровно 60 FPS)
+            // Это позволяет ползунку двигаться без рывков, но не спамит браузер миллионами сообщений
+            if (applyTimeout) return; 
+            applyTimeout = setTimeout(async () => {
+                applyTimeout = null;
+                await applySettings();
+            }, 16);
         }
     }
 
     function getAllPresets() { return { ...BUILT_IN_PRESETS, ...(currentSettings.eqPresets || {}) }; }
     function isBuiltIn(id) { return !!BUILT_IN_PRESETS[id]; }
 
-    // --- ЛОГИКА УМНОГО РЕСЕТА СЕКЦИЙ ---
     function updateSectionResetIcons() {
         document.querySelectorAll('.reset-icon').forEach(icon => {
             const sectionId = icon.dataset.section;
@@ -142,26 +145,24 @@
             }
 
             if(isModified){
-              icon.classList.add("visible");
+                icon.classList.add("visible");
             }else{
-              icon.classList.remove("visible");
+                icon.classList.remove("visible");
             }
         });
     }
 
-    // Делегирование событий для кнопок сброса секций (без ID)
     document.addEventListener('click', (e) => {
         const resetIcon = e.target.closest('.reset-icon');
         if (!resetIcon) return;
         
-        e.stopPropagation(); // Чтобы не закрывался <details>
+        e.stopPropagation();
         e.preventDefault();
 
         const sectionId = resetIcon.dataset.section;
         const defaults = SECTION_DEFAULTS[sectionId];
         if (!defaults) return;
 
-        // Применяем дефолтные значения только для этой секции
         for (const key in defaults) {
             currentSettings[key] = Array.isArray(defaults[key]) ? [...defaults[key]] : defaults[key];
         }
@@ -169,7 +170,6 @@
         updateUI();
         scheduleApply();
     });
-    // -----------------------------------
 
     function updatePresetSelectUI() {
         const select = eqPresetSelect, all = getAllPresets();
@@ -234,7 +234,7 @@
         document.querySelectorAll(".range-slider input").forEach(syncVisualSlider);
         updateEqualizerGraph();
         updatePresetSelectUI();
-        updateSectionResetIcons(); // Обновляем видимость иконок ресета
+        updateSectionResetIcons();
     }
 
     function formatDb(val) { return val > 0 ? `+${val} dB` : `${val} dB`; }
@@ -263,14 +263,12 @@
 
     async function refreshSiteStatus() {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        // ИСПРАВЛЕНИЕ: Точка теперь экранируется корректно для YouTube и других доменов
         let statusText = function matchURLPatterns(url, urlPatterns) {
             const patterns = Array.isArray(urlPatterns) ? urlPatterns : [];
             return patterns.some(pattern => {
                 const np = pattern.trim();
                 if (!np) return false;
-                // Экранируем все спецсимволы regex, КРОМЕ звездочки
-                const escaped = np.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, ".*");
+                const escaped = np.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
                 return String(url || "").match(new RegExp("^" + escaped + "$"));
             });
         }(tab?.url || "", currentSettings.blacklistPatterns || []) ? "inactive" : "active";
@@ -373,7 +371,6 @@
         renderPresetList(); updatePresetSelectUI(); scheduleApply();
     }
 
-    // Event Listeners
     document.querySelectorAll(".range-slider input").forEach(input => {
         input.addEventListener("input", e => {
             syncVisualSlider(e.target);
@@ -395,7 +392,7 @@
                     updateEqualizerGraph(); updatePresetSelectUI();
                 }
             }
-            updateSectionResetIcons(); // Обновляем иконки при движении слайдеров
+            updateSectionResetIcons();
             scheduleApply();
         });
     });

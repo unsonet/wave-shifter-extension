@@ -409,12 +409,14 @@ details>.control:last-child {
             align-items: center;
             cursor: pointer;
             user-select: none;
+            position: relative;
         }
         .summary-container span {
             flex: 1;
         }
         .reset-icon {
-            position: relative;
+            position: absolute;
+            right: 0;
             width: 16px;
             height: 16px;
             margin-left: auto;
