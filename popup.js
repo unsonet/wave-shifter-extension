@@ -9,27 +9,63 @@
         preservePitch: true,
         blacklistPatterns: [],
         volumeBoostDb: 0,
-        toggleState: { volumeBoost: true, pitchSettings: true, speedSettings: false, eqSettings: false },
+        toggleState: {
+            volumeBoost: true,
+            pitchSettings: true,
+            speedSettings: false,
+            eqSettings: false,
+            spatialSettings: false,
+            dynamicsSettings: false,
+            surroundSettings: false
+        },
         eqGains: Array(10).fill(50),
-        eqPreset: "flat"
+        eqPreset: "flat",
+        reverbType: null,
+        reverbWet: 0,
+        stereoWiden: 0,
+        channelBalance: 0,
+
+        compressorThreshold: -24,
+        compressorKnee: 30,
+        compressorRatio: 12,
+        compressorAttack: 3,
+        compressorRelease: 250,
+        dolbyEnabled: false,
+
     };
 
     const SECTION_DEFAULTS = {
         '#volumeBoostPanel': { volumeBoostDb: DEFAULT_SETTINGS.volumeBoostDb },
-        '#pitchSettingsPanel': { 
+        '#pitchSettingsPanel': {
             pitchValueSemitones: DEFAULT_SETTINGS.pitchValueSemitones,
             pitchValueCents: DEFAULT_SETTINGS.pitchValueCents,
             windowSizeMilliseconds: DEFAULT_SETTINGS.windowSizeMilliseconds,
             applySmartProcessing: DEFAULT_SETTINGS.applySmartProcessing
         },
-        '#speedSettingsPanel': { 
+        '#speedSettingsPanel': {
             speedUnits: DEFAULT_SETTINGS.speedUnits,
             speedFine: DEFAULT_SETTINGS.speedFine,
             preservePitch: DEFAULT_SETTINGS.preservePitch
         },
-        '#eqSettingsPanel': { 
-            eqGains: [...DEFAULT_SETTINGS.eqGains], 
-            eqPreset: DEFAULT_SETTINGS.eqPreset 
+        '#eqSettingsPanel': {
+            eqGains: [...DEFAULT_SETTINGS.eqGains],
+            eqPreset: DEFAULT_SETTINGS.eqPreset
+        },
+        "#spatialSettingsPanel": {
+            reverbType: DEFAULT_SETTINGS.reverbType,
+            reverbWet: DEFAULT_SETTINGS.reverbWet,
+            stereoWiden: DEFAULT_SETTINGS.stereoWiden,
+            channelBalance: DEFAULT_SETTINGS.channelBalance
+        },
+        "#dynamicsPanel": {
+            compressorThreshold: -24,
+            compressorKnee: 30,
+            compressorRatio: 12,
+            compressorAttack: 3,
+            compressorRelease: 250
+        },
+        "#surroundPanel": {
+            dolbyEnabled: false
         }
     };
 
@@ -82,12 +118,35 @@
     const presetAddBtn = document.getElementById("presetAddBtn");
     const presetList = document.getElementById("presetList");
     const optimisationDelayCheck = document.getElementById("optimisationDelay");
+    const spatialSettingsPanel = document.getElementById("spatialSettingsPanel"),
+        reverbPresetSelect = document.getElementById("reverbPreset"),
+        reverbWetSlider = document.getElementById("reverbWet"),
+        reverbWetVal = document.getElementById("reverbWetVal"),
+        stereoWidenSlider = document.getElementById("stereoWiden"),
+        stereoWidenVal = document.getElementById("stereoWidenVal"),
+        channelBalanceSlider = document.getElementById("channelBalance"),
+        channelBalanceVal = document.getElementById("channelBalanceVal");
+    const dynamicsPanel = document.getElementById("dynamicsPanel"),
+        surroundPanel = document.getElementById("surroundPanel"),
+
+        compressorThresholdSlider = document.getElementById("compressorThreshold"),
+        compressorThresholdVal = document.getElementById("compressorThresholdVal"),
+        compressorKneeSlider = document.getElementById("compressorKnee"),
+        compressorKneeVal = document.getElementById("compressorKneeVal"),
+        compressorRatioSlider = document.getElementById("compressorRatio"),
+        compressorRatioVal = document.getElementById("compressorRatioVal"),
+        compressorAttackSlider = document.getElementById("compressorAttack"),
+        compressorAttackVal = document.getElementById("compressorAttackVal"),
+        compressorReleaseSlider = document.getElementById("compressorRelease"),
+        compressorReleaseVal = document.getElementById("compressorReleaseVal"),
+        dolbyEnabledCheck = document.getElementById("dolbyEnabled")
+
 
     let currentSettings = await (async function loadSettings() {
         const result = await chrome.storage.local.get("pitchSettings");
         let defaultSettings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
         const saved = result.pitchSettings || {};
-        
+
         return {
             ...defaultSettings,
             ...saved,
@@ -108,6 +167,7 @@
     }
 
     let applyTimeout = null;
+
     async function scheduleApply() {
         if (currentSettings.optimisationDelay) {
             // Режим жесткой оптимизации: ждем 150мс после остановки ползунка
@@ -116,7 +176,7 @@
         } else {
             // ИДЕАЛЬНО ПЛАВНЫЙ РЕЖИМ: Троттлинг 16мс (ровно 60 FPS)
             // Это позволяет ползунку двигаться без рывков, но не спамит браузер миллионами сообщений
-            if (applyTimeout) return; 
+            if (applyTimeout) return;
             applyTimeout = setTimeout(async () => {
                 applyTimeout = null;
                 await applySettings();
@@ -144,9 +204,9 @@
                 }
             }
 
-            if(isModified){
+            if (isModified) {
                 icon.classList.add("visible");
-            }else{
+            } else {
                 icon.classList.remove("visible");
             }
         });
@@ -155,7 +215,7 @@
     document.addEventListener('click', (e) => {
         const resetIcon = e.target.closest('.reset-icon');
         if (!resetIcon) return;
-        
+
         e.stopPropagation();
         e.preventDefault();
 
@@ -205,32 +265,57 @@
         semitonesVal.textContent = currentSettings.pitchValueSemitones;
         centsVal.textContent = currentSettings.pitchValueCents;
         blockSizeVal.textContent = currentSettings.windowSizeMilliseconds;
-        
+
         speedUnitsSlider.value = currentSettings.speedUnits;
         speedFineSlider.value = currentSettings.speedFine;
         preservePitchCheck.checked = currentSettings.preservePitch;
         speedUnitsVal.textContent = calcSpeedPercentage(currentSettings.speedUnits, 0) + "%";
         speedFineVal.textContent = calcSpeedPercentage(currentSettings.speedUnits, currentSettings.speedFine) + "%";
-        
+
         pitchSettingsPanel.open = currentSettings.toggleState?.pitchSettings ?? true;
         speedSettingsPanel.open = currentSettings.toggleState?.speedSettings ?? false;
         eqSettingsPanel.open = currentSettings.toggleState?.eqSettings ?? false;
         volumeBoostPanel.open = currentSettings.toggleState?.volumeBoost ?? true;
-        
+
         eqPresetSelect.value = currentSettings.eqPreset || "flat";
         volumeBoostSlider.value = currentSettings.volumeBoostDb;
         volumeBoostVal.textContent = formatDb(currentSettings.volumeBoostDb);
-        optimisationDelayCheck.checked = currentSettings.optimisationDelay || false;
+
+        spatialSettingsPanel.open = currentSettings.toggleState?.spatialSettings ?? !1,
+            reverbPresetSelect.value = currentSettings.reverbType || "null",
+            reverbWetSlider.value = currentSettings.reverbWet,
+            reverbWetVal.textContent = currentSettings.reverbWet + "%",
+            stereoWidenSlider.value = currentSettings.stereoWiden,
+            stereoWidenVal.textContent = currentSettings.stereoWiden,
+            channelBalanceSlider.value = currentSettings.channelBalance,
+            channelBalanceVal.textContent = currentSettings.channelBalance,
+
+            dynamicsPanel.open = currentSettings.toggleState?.dynamicsSettings ?? !1,
+            surroundPanel.open = currentSettings.toggleState?.surroundSettings ?? !1,
+
+            compressorThresholdSlider.value = currentSettings.compressorThreshold,
+            compressorThresholdVal.textContent = currentSettings.compressorThreshold + " dB",
+            compressorKneeSlider.value = currentSettings.compressorKnee,
+            compressorKneeVal.textContent = currentSettings.compressorKnee + " dB",
+            compressorRatioSlider.value = currentSettings.compressorRatio,
+            compressorRatioVal.textContent = currentSettings.compressorRatio + ":1",
+            compressorAttackSlider.value = currentSettings.compressorAttack,
+            compressorAttackVal.textContent = currentSettings.compressorAttack + " ms",
+            compressorReleaseSlider.value = currentSettings.compressorRelease,
+            compressorReleaseVal.textContent = currentSettings.compressorRelease + " ms",
+            dolbyEnabledCheck.checked = currentSettings.dolbyEnabled,
+
+            optimisationDelayCheck.checked = currentSettings.optimisationDelay || false;
 
         document.querySelectorAll('.range-slider[style*="vertical"] input').forEach((input, i) => {
             const targetVal = currentSettings.eqGains[i] !== undefined ? currentSettings.eqGains[i] : 50;
             if (input.value !== String(targetVal)) {
-                input.value = input.min; input.offsetWidth; 
+                input.value = input.min; input.offsetWidth;
             }
             input.value = targetVal;
             syncVisualSlider(input);
         });
-        
+
         document.querySelectorAll(".range-slider input").forEach(syncVisualSlider);
         updateEqualizerGraph();
         updatePresetSelectUI();
@@ -256,7 +341,7 @@
         await chrome.storage.local.set({ pitchSettings: currentSettings });
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         if (tab?.id) {
-            try { await chrome.tabs.sendMessage(tab.id, { type: "updateSettings", settings: currentSettings }); } catch (e) {}
+            try { await chrome.tabs.sendMessage(tab.id, { type: "updateSettings", settings: currentSettings }); } catch (e) { }
         }
         await refreshSiteStatus();
     }
@@ -272,7 +357,7 @@
                 return String(url || "").match(new RegExp("^" + escaped + "$"));
             });
         }(tab?.url || "", currentSettings.blacklistPatterns || []) ? "inactive" : "active";
-        
+
         siteStatusDot.classList.remove("active", "inactive");
         siteStatusDot.classList.add(statusText);
         siteStatusText.textContent = statusText;
@@ -284,7 +369,10 @@
             volumeBoost: volumeBoostPanel.open,
             pitchSettings: pitchSettingsPanel.open,
             speedSettings: speedSettingsPanel.open,
-            eqSettings: eqSettingsPanel.open
+            eqSettings: eqSettingsPanel.open,
+            spatialSettings: spatialSettingsPanel.open,
+            dynamicsSettings: dynamicsPanel.open,
+            surroundSettings: surroundPanel.open
         };
         await chrome.storage.local.set({ pitchSettings: currentSettings });
     }
@@ -363,7 +451,7 @@
         const genres = genresStr ? genresStr.split(",").map(g => g.trim().toLowerCase()).filter(Boolean) : [];
         let id = name.toLowerCase().replace(/\s+/g, "_"), counter = 1;
         while (getAllPresets()[id]) id = `${name.toLowerCase().replace(/\s+/g, "_")}_${counter++}`;
-        
+
         currentSettings.eqPresets = { ...(currentSettings.eqPresets || {}) };
         currentSettings.eqPresets[id] = { name, genres, values: [...currentSettings.eqGains] };
         currentSettings.eqPreset = id;
@@ -374,15 +462,54 @@
     document.querySelectorAll(".range-slider input").forEach(input => {
         input.addEventListener("input", e => {
             syncVisualSlider(e.target);
-            const id = e.target.id, val = parseFloat(e.target.value);
-            
+            const id = e.target.id;
+            let val = parseFloat(e.target.value);
+
             if (id === "semitones") { currentSettings.pitchValueSemitones = val; semitonesVal.textContent = val; }
             if (id === "cents") { currentSettings.pitchValueCents = val; centsVal.textContent = val; }
             if (id === "blockSize") { currentSettings.windowSizeMilliseconds = val; blockSizeVal.textContent = val; }
             if (id === "speedUnits") { currentSettings.speedUnits = val; speedUnitsVal.textContent = calcSpeedPercentage(val, 0) + "%"; }
             if (id === "speedFine") { currentSettings.speedFine = val; speedFineVal.textContent = calcSpeedPercentage(currentSettings.speedUnits, val) + "%"; }
-            if (id === "volumeBoostDb") { currentSettings.volumeBoostDb = val; volumeBoostVal.textContent = formatDb(val); }
-            
+            if (id === "volumeBoostDb") {
+                currentSettings.volumeBoostDb = val;
+                volumeBoostVal.textContent = formatDb(val);
+            }
+
+            if (id === "reverbWet") {
+                currentSettings.reverbWet = val;
+                reverbWetVal.textContent = val + "%";
+            }
+            if (id === "stereoWiden") {
+                currentSettings.stereoWiden = val;
+                stereoWidenVal.textContent = val;
+            }
+
+            if (id === "channelBalance") {
+                currentSettings.channelBalance = val;
+                channelBalanceVal.textContent = val;
+            }
+
+            if (id === "compressorThreshold") {
+                currentSettings.compressorThreshold = val;
+                compressorThresholdVal.textContent = val + " dB";
+            }
+            if (id === "compressorKnee") {
+                currentSettings.compressorKnee = val;
+                compressorKneeVal.textContent = val + " dB";
+            }
+            if (id === "compressorRatio") {
+                currentSettings.compressorRatio = val;
+                compressorRatioVal.textContent = val + ":1";
+            }
+            if (id === "compressorAttack") {
+                currentSettings.compressorAttack = val;
+                compressorAttackVal.textContent = val + " ms";
+            }
+            if (id === "compressorRelease") {
+                currentSettings.compressorRelease = val;
+                compressorReleaseVal.textContent = val + " ms";
+            }
+
             if (e.target.orient === "vertical" || e.target.getAttribute("orient") === "vertical") {
                 const index = Array.from(document.querySelectorAll('.range-slider[style*="vertical"] input')).indexOf(e.target);
                 if (index !== -1) {
@@ -399,9 +526,28 @@
 
     smartCheck.addEventListener("change", e => { currentSettings.applySmartProcessing = e.target.checked; updateSectionResetIcons(); scheduleApply(); });
     preservePitchCheck.addEventListener("change", e => { currentSettings.preservePitch = e.target.checked; updateSectionResetIcons(); scheduleApply(); });
-    optimisationDelayCheck.addEventListener("change", e => { currentSettings.optimisationDelay = e.target.checked; scheduleApply(); });
+
+    optimisationDelayCheck.addEventListener("change", e => {
+        currentSettings.optimisationDelay = e.target.checked;
+        scheduleApply()
+    });
+
+    dolbyEnabledCheck.addEventListener("change",e=>{
+        currentSettings.dolbyEnabled=e.target.checked;
+        updateSectionResetIcons();
+        scheduleApply();
+    })
+
+    reverbPresetSelect.addEventListener("change", e => {
+        currentSettings.reverbType = e.target.value === "null" ? null : e.target.value;
+        updateSectionResetIcons();
+        scheduleApply();
+    });
+
+
+
     eqPresetSelect.addEventListener("change", e => { applyPresetToUI(e.target.value); updateSectionResetIcons(); scheduleApply(); });
-    
+
     resetBtn.addEventListener("click", async () => {
         let defaultSettings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
         currentSettings = { ...defaultSettings, blacklistPatterns: currentSettings.blacklistPatterns || [], toggleState: currentSettings.toggleState || defaultSettings.toggleState, eqPresets: currentSettings.eqPresets || {} };
@@ -413,7 +559,7 @@
     blacklistModalCloseBtn.addEventListener("click", closeBlacklistModal);
     blacklistAddBtn.addEventListener("click", addBlacklistPattern);
     blacklistInput.addEventListener("keydown", async e => { if (e.key === "Enter") { e.preventDefault(); await addBlacklistPattern(); } if (e.key === "Escape") closeBlacklistModal(); });
-    
+
     blacklistList.addEventListener("input", async e => {
         const inp = e.target.closest(".blacklist-item-input"); if (!inp) return;
         const row = inp.closest(".blacklist-item"), idx = Number(row?.dataset.index);
@@ -423,7 +569,7 @@
         currentSettings.blacklistPatterns = arr.filter(Boolean);
         await applySettings();
     });
-    
+
     blacklistList.addEventListener("click", async e => {
         const btn = e.target.closest(".blacklist-item-delete"); if (!btn) return;
         const row = btn.closest(".blacklist-item"), idx = Number(row?.dataset.index);
@@ -440,7 +586,7 @@
     presetAddBtn.addEventListener("click", addPreset);
     presetNameInput.addEventListener("keydown", async e => { if (e.key === "Enter") { e.preventDefault(); await addPreset(); } if (e.key === "Escape") closePresetModal(); });
     presetGenresInput.addEventListener("keydown", async e => { if (e.key === "Enter") { e.preventDefault(); await addPreset(); } if (e.key === "Escape") closePresetModal(); });
-    
+
     presetList.addEventListener("input", e => {
         const row = e.target.closest(".blacklist-item"); if (!row) return;
         const id = row.dataset.id; if (isBuiltIn(id)) return;
@@ -450,7 +596,7 @@
         if (currentSettings.eqPreset === id) updatePresetSelectUI();
         scheduleApply();
     });
-    
+
     presetList.addEventListener("click", async e => {
         const btn = e.target.closest(".blacklist-item-delete"); if (!btn) return;
         const id = btn.closest(".blacklist-item")?.dataset.id;
@@ -469,8 +615,8 @@
     });
     blacklistModal.addEventListener("click", e => { if (e.target === blacklistModal) closeBlacklistModal(); });
     presetModal.addEventListener("click", e => { if (e.target === presetModal) closePresetModal(); });
-    
-    [volumeBoostPanel, pitchSettingsPanel, speedSettingsPanel, eqSettingsPanel].forEach(p => p.addEventListener("toggle", saveToggleState));
+
+    [volumeBoostPanel, pitchSettingsPanel, speedSettingsPanel, eqSettingsPanel, spatialSettingsPanel, dynamicsPanel, surroundPanel].forEach(p => p.addEventListener("toggle", saveToggleState));
 
     updateUI(); renderBlacklistList(); renderPresetList(); await refreshSiteStatus();
 })();

@@ -45,7 +45,8 @@
       "resources": [
         "page-hook.js",
         "__pitch_shifter_worklet.js",
-        "src/js/SignalsmithStretch.min.js"
+        "src/js/SignalsmithStretch.min.js",
+        "src/sounds/*.wav"
       ],
       "matches": [
         "<all_urls>"
