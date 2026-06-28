@@ -447,11 +447,16 @@ details>.control:last-child {
 
 /*footer*/
 .row-buttons {
-  margin-top: 10px;
-  margin-bottom: 0px;
-  display: flex;
-  gap: 8px;
-  align-items: center;
+  background-color: #1e1e2f;
+    z-index: 1;
+    margin-bottom: -13px;
+    bottom: 0;
+    position: sticky;
+    padding-top: 10px;
+    padding-bottom: 10px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
 }
 
 #siteStatus {
@@ -511,7 +516,7 @@ details>.control:last-child {
   margin: 0;
   padding: 0;
   opacity: 0;
-  z-index: 10;
+  z-index: 0;
   cursor: pointer;
   touch-action: none;
   user-select: none;
@@ -541,14 +546,14 @@ details>.control:last-child {
   background: var(--rs-color-track);
   border: 2px solid var(--rs-color-track-border);
   border-radius: 10px;
-  z-index: 1;
+  z-index: 0;
   pointer-events: none;
 }
 
 .range-slider__bar {
   position: absolute;
   border-radius: 10px;
-  z-index: 2;
+  z-index: 0;
   pointer-events: none;
 }
 
@@ -567,7 +572,7 @@ details>.control:last-child {
   background-color: var(--rs-color-thumb);
   border-radius: 50%;
   box-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
-  z-index: 5;
+  z-index: 0;
   pointer-events: none;
   transition: none;
 }
@@ -723,7 +728,7 @@ select {
   left: 0;
   width: 100%;
   height: calc(100% - 20px);
-  z-index: 3;
+  z-index: 0;
   pointer-events: none;
   overflow: visible;
   fill: none;

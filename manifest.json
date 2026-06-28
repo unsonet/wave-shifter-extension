@@ -5,7 +5,7 @@
   "description": "Ultimate real-time audio enhancer: pitch shift, EQ, volume boost & speed control for videos and music on any website.",
   "author": "Unsonet <https://github.com/Unsonet>",
   "homepage_url": "https://unsonet.onrender.com/",
-  "version": "1.4",
+  "version": "1.5",
   "permissions": [
     "storage",
     "declarativeNetRequest",
@@ -45,6 +45,7 @@
       "resources": [
         "page-hook.js",
         "__pitch_shifter_worklet.js",
+        "src/js/pitch-correlator-processor.js", 
         "src/js/SignalsmithStretch.min.js",
         "src/sounds/*.wav"
       ],

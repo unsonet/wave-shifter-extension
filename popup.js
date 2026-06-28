@@ -10,9 +10,9 @@
         blacklistPatterns: [],
         volumeBoostDb: 0,
         toggleState: {
-            volumeBoost: true,
+            volumeBoost: false,
             pitchSettings: true,
-            speedSettings: false,
+            speedSettings: true,
             eqSettings: false,
             spatialSettings: false,
             dynamicsSettings: false,

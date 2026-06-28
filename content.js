@@ -8,7 +8,7 @@
     speedFine: 0,
     preservePitch: true,
     blacklistPatterns: [],
-    channelBalance:0,
+    channelBalance: 0,
   };
 
   const stored = await chrome.storage.local.get('pitchSettings');
@@ -18,15 +18,16 @@
     ...(stored.pitchSettings || {}),
   };
 
-  const workletUrl = chrome.runtime.getURL('__pitch_shifter_worklet.js');
-  const hookUrl = chrome.runtime.getURL('page-hook.js');
-  const soundsBaseUrl = chrome.runtime.getURL('src/sounds/');
+  const workletUrl = chrome.runtime.getURL("__pitch_shifter_worklet.js");
+  const fallbackWorkletUrl = chrome.runtime.getURL("src/js/pitch-correlator-processor.js");
+  const hookUrl = chrome.runtime.getURL("page-hook.js");
+  const soundsBaseUrl = chrome.runtime.getURL("src/sounds/");
 
-  // shared config for MAIN world
   window.__pitchShifterExtensionConfig = {
     workletUrl,
+    fallbackWorkletUrl,
     soundsBaseUrl,
-    initialSettings: pitchSettings,
+    initialSettings: pitchSettings
   };
 
   // DOM fallback config
@@ -38,6 +39,7 @@
       (document.head || document.documentElement).appendChild(meta);
     }
     meta.dataset.workletUrl = workletUrl;
+    meta.dataset.fallbackWorkletUrl = fallbackWorkletUrl; 
     meta.dataset.soundsBaseUrl = soundsBaseUrl;
     meta.dataset.initialSettings = JSON.stringify(pitchSettings);
   } catch (e) {
