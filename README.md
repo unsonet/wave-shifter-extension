@@ -37,7 +37,7 @@ The following websites are useful for verifying different aspects of Wave Shifte
 |---------|---------|
 | https://vinylkafka.vercel.app/ | Uses howler.js internally instead of exposing native HTML5 audio elements. Useful for testing integration with third-party audio libraries. |
 | https://en.wikipedia.org/wiki/File:Caroline,_No.ogg | Hosts a cross-origin static audio file. Useful for verifying CORS handling and MediaElementAudioSource compatibility. |
-| https://www.reddit.com/r/psychedelicrock/comments/1ugqfz3/the_velvet_underground_all_tomorrows_parties/ | Reddit enforces a restrictive Content Security Policy that blocks injected WebAssembly. Useful for verifying the automatic JavaScript fallback processor. |
+| https://www.reddit.com/r/psychedelicrock/comments/1ugqfz3/ | Reddit enforces a restrictive Content Security Policy that blocks injected WebAssembly. Useful for verifying the automatic JavaScript fallback processor. |
 | https://www.youtube.com/shorts | Continuously replaces media elements while scrolling. Useful for testing automatic media detection and reconnection. |
 | https://open.spotify.com/ | Streams audio in short media segments. Useful for testing processing stability on modern streaming services. |
 
