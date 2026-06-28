@@ -9,21 +9,37 @@ Unlike simple playback-rate controls, Wave Shifter can shift pitch independently
 - 🎵 Pitch shifting in semitones (-12 to +12)
 - 🎚 Fine pitch adjustment in cents (-50 to +50)
 - ⚡ Playback speed control
-- 🎼 Optional pitch preservation when changing speed
+- 🎼 Optional pitch preservation when changing playback speed
+- 🔊 Volume boost
+- 🎚 10-band equalizer
+- 🌊 Reverb with multiple room presets (Ambience, Chamber, Hall, Plate, Space)
+- 🎛 Adjustable reverb depth
+- 🎧 Stereo widener
+- ⚖ Stereo channel balance control
+- 🎚 Dynamic range compressor with configurable threshold, knee, ratio, attack and release
+- 🎬 Experimental Dolby Surround (5.1) upmix
 - 🧠 Smart processing mode for improved performance
 - 🔧 Adjustable processing block size
 - 🎥 Works with HTML5 audio and video elements
+- 📚 Support for popular audio libraries (including howler.js)
+- 🔄 Automatically detects dynamically created media elements
+- ⚙ Automatic fallback when WebAssembly is blocked by Content Security Policy (CSP)
+- 🚫 Configurable website blacklist
 - 🚀 Real-time processing using AudioWorklets
-- 🌐 Fully client-side processing
-- 📚 Support for popular libraries (for example [howler.js](https://github.com/goldfire/howler.js))
-- 🚫 Blacklist functionality
-- 🎚️ 10-Band Equalizer: Shape your sound with a parametric EQ. 
+- 🌐 Fully client-side audio processing
 - 🔓 Free and open source
 
-## Demo
-For testing such extensions, it is best to use demo websites where audio and video elements are hidden or encapsulated within third-party libraries such as howler.js. This is the standard behavior for most streaming services.
+## Recommended Testing Websites
 
-for example: https://vinylkafka.vercel.app/
+The following websites are useful for verifying different aspects of Wave Shifter compatibility.
+
+| Website | Purpose |
+|---------|---------|
+| https://vinylkafka.vercel.app/ | Uses howler.js internally instead of exposing native HTML5 audio elements. Useful for testing integration with third-party audio libraries. |
+| https://en.wikipedia.org/wiki/File:Caroline,_No.ogg | Hosts a cross-origin static audio file. Useful for verifying CORS handling and MediaElementAudioSource compatibility. |
+| https://www.reddit.com/r/psychedelicrock/comments/1ugqfz3/the_velvet_underground_all_tomorrows_parties/ | Reddit enforces a restrictive Content Security Policy that blocks injected WebAssembly. Useful for verifying the automatic JavaScript fallback processor. |
+| https://www.youtube.com/shorts | Continuously replaces media elements while scrolling. Useful for testing automatic media detection and reconnection. |
+| https://open.spotify.com/ | Streams audio in short media segments. Useful for testing processing stability on modern streaming services. |
 
 ## Installation
 
@@ -113,27 +129,110 @@ Keeps the original pitch while changing playback speed.
 
 When disabled, changing speed will affect pitch naturally, similar to tape playback.
 
+### Volume Boost
+
+Applies additional gain after audio processing.
+
+Useful for quiet recordings or content with low output volume.
+
+### Equalizer
+
+Wave Shifter includes a 10-band graphic equalizer covering the full audible frequency range.
+
+Each band can be adjusted independently to tailor the sound to your preferences.
+
+### Spatial Processing
+
+Wave Shifter provides several spatial audio effects.
+
+#### Reverb
+
+Adds room ambience using convolution reverb.
+
+Available presets include:
+
+- Ambience
+- Chamber
+- Hall
+- Plate
+- Space
+
+#### Reverb Depth
+
+Controls the wet/dry mix of the selected reverb.
+
+#### Stereo Widener
+
+Expands the stereo image by increasing the perceived width of the audio.
+
+#### Channel Balance
+
+Adjusts the balance between the left and right audio channels.
+
+### Dynamics
+
+Wave Shifter includes a configurable dynamic range compressor.
+
+Available controls:
+
+- Threshold
+- Knee
+- Ratio
+- Attack
+- Release
+
+The compressor can reduce excessive peaks and produce a more consistent listening experience.
+
+### Surround
+
+Experimental Dolby Surround (5.1) upmix.
+
+When enabled, stereo audio is expanded into a virtual 5.1 channel layout using the Web Audio API.
+
+Availability depends on browser capabilities and the connected audio device.
+
 ## How It Works
 
-Wave Shifter injects an AudioWorklet into the page and routes media elements through a real-time pitch-shifting processor powered by Signalsmith Stretch.
+Wave Shifter injects an AudioWorklet into the page and routes HTML5 media elements through a custom audio processing graph built with the Web Audio API.
 
-Audio processing is performed locally in the browser. No audio data is sent to external servers.
+The processing pipeline may include:
+
+- Pitch shifting
+- Time stretching
+- Equalization
+- Reverb
+- Stereo widening
+- Dynamic compression
+- Surround upmix
+- Volume adjustment
+
+Whenever possible, Wave Shifter uses the high-quality Signalsmith Stretch engine compiled to WebAssembly.
+
+If WebAssembly execution is blocked by the website's Content Security Policy (CSP), Wave Shifter automatically falls back to a pure JavaScript processing engine to preserve compatibility.
+
+All processing is performed locally inside your browser. No audio data is transmitted to external servers.
+
+## Supported Media
+
+Wave Shifter supports:
+
+- HTML5 `<audio>`
+- HTML5 `<video>`
+- dynamically created media elements
+- media players based on howler.js
+- most modern streaming websites that expose HTML5 media
+
+Media elements added after page load are detected automatically.
 
 ## Limitations
 
-### Cross-Origin Audio Restrictions
+### Content Security Policy
 
-Some websites serve media without CORS permissions.
+Some websites restrict WebAssembly execution inside injected scripts.
 
-In these cases, browsers intentionally block access to the audio stream for security reasons, preventing audio processing through the Web Audio API.
+Wave Shifter automatically detects this situation and switches to a JavaScript-based processing engine whenever possible.
 
-You may see messages similar to:
-
-```text
-MediaElementAudioSource outputs zeroes due to CORS access restrictions
-```
-
-When this occurs, pitch shifting cannot be applied to that media source.
+Depending on browser restrictions, audio quality and CPU usage may differ between processing engines.
 
 ### Protected Media
 
