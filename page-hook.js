@@ -581,7 +581,8 @@
                     // Чужой домен без CORS. Включаем и перезагружаем файл бесшовно.
                     console.log("[WS] Enabling CORS for:", src);
                     mediaEl.crossOrigin = "anonymous";
-
+                    mediaEl.__ws_justCorsReloaded = true; // Ставим флажок
+                    
                     const t = mediaEl.currentTime;
                     const wasPlaying = !mediaEl.paused;
                     mediaEl.src = src; // Это заставит браузер запросить файл с заголовком CORS
@@ -613,21 +614,21 @@
                 }
                 applySpeedSettings(mediaEl);
 
-                if (!mediaEl.__pitchSource) {
-                    // ФИКС БАГА "ДУЭТА" НА WIKIPEDIA (И НА DIRECT ССЫЛКАХ ФАЙЛОВ):
-                    // При перехвате уже играющего элемента (после смены src для CORS),
-                    // Chrome может не отключить нативный вывод, из-за чего слышно и оригинал, и питч.
-                    // Хитрость: замьючиваем нативный динамик прямо перед захватом. 
-                    // Это НЕ затронет звук в нашем AudioContext, но гарантированно убьет нативный поток.
-                    const wasMuted = mediaEl.muted;
-                    mediaEl.muted = true;
-
+                                if (!mediaEl.__pitchSource) {
                     const source = audioCtx.createMediaElementSource(mediaEl);
                     mediaEl.__pitchSource = source;
-                    source.connect(sourceGain);
+                    source.connect(sourceGain); 
 
-                    // Возвращаем исходное состояние mute (наш граф теперь полностью управляет звуком)
-                    if (!wasMuted) mediaEl.muted = false;
+                    // ФИКС БАГА "ДУЭТА" НА WIKIPEDIA: 
+                    // Применяем хак с mute ТОЛЬКО если мы только что принудительно перезагрузили файл для CORS.
+                    // На Spotify, Youtube и других сайтах этот флажок не стоит, поэтому их внутренний
+                    // аудио-граф не ломается при переключении треков.
+                    if (mediaEl.__ws_justCorsReloaded) {
+                        const wasMuted = mediaEl.muted;
+                        mediaEl.muted = true; 
+                        if (!wasMuted) mediaEl.muted = false;
+                        delete mediaEl.__ws_justCorsReloaded;
+                    }
 
                     // ФИКС ДЛЯ REDDIT AUTOPLAY: 
                     // Reddit запускает видео замученным. Клик по "Unmute" — это user gesture.
