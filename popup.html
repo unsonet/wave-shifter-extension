@@ -277,7 +277,7 @@
     </div>
     <div class="row controls">
 
-        <!-- <div class="select-row">
+        <div class="select-row">
             <span>Preset:</span>
             <select id="globalPresetSelect">
                 <option value="default">Default</option>
@@ -286,11 +286,11 @@
                 <input type="checkbox" id="overlay">
                 <label>Overlay</label>
             </div>
-        </div> -->
+        </div>
         <div class="button-row">
             <button id="blacklistBtn" class="btn-vk" type="button">Blacklist</button>
             <button id="resetBtn" class="btn-vk" type="button">Reset</button>
-            <!-- <button id="presetsBtn" class="btn-vk" type="button">Presets</button> -->
+            <button id="globalPresetsBtn" class="btn-vk" type="button">Presets</button>
             <div id="siteStatus"><span id="siteStatusDot"></span><span id="siteStatusText">active</span></div>
         </div>
 
@@ -322,11 +322,11 @@
     </div>
 
     <div id="globalPresetModal" class="simple-modal" aria-hidden="true">
-    <div class="simple-modal__backdrop" id="globalPresetModalClose"></div>
+    <div class="simple-modal__backdrop"></div>
     <div class="simple-modal__panel">
         <div class="simple-modal__header">
             <div style="font-weight:600;">Presets</div>
-            <button id="globalPresetModalCloseBtn" type="button">×</button>
+            <button class="close" type="button">×</button>
         </div>
         <div class="simple-modal__add" style="flex-wrap:wrap;gap:6px;">
             <input id="globalPresetNameInput" type="text" placeholder="Preset name" spellcheck="false" style="flex:1;min-width:100px;" />

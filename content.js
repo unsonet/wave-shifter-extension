@@ -39,7 +39,7 @@
       (document.head || document.documentElement).appendChild(meta);
     }
     meta.dataset.workletUrl = workletUrl;
-    meta.dataset.fallbackWorkletUrl = fallbackWorkletUrl; 
+    meta.dataset.fallbackWorkletUrl = fallbackWorkletUrl;
     meta.dataset.soundsBaseUrl = soundsBaseUrl;
     meta.dataset.initialSettings = JSON.stringify(pitchSettings);
   } catch (e) {
@@ -92,15 +92,14 @@
   chrome.runtime.onMessage.addListener(
     (msg, _sender, sendResponse) => {
       if (msg?.type === 'updateSettings') {
-        window.postMessage(
-          {
-            type: 'PITCH_UPDATE',
-            settings: msg.settings,
-          },
-          '*'
-        );
+        window.postMessage({
+          type: "PITCH_UPDATE",
+          settings: msg.settings,
+          overlayPresets: msg.overlayPresets,
+          overlayConfig: msg.overlayConfig
+        }, "*"),
 
-        sendResponse({ status: 'ok' });
+          sendResponse({ status: 'ok' });
       }
 
       return true;
@@ -108,11 +107,34 @@
   );
 
   // initial settings push
-  window.postMessage(
-    {
-      type: 'PITCH_UPDATE',
-      settings: pitchSettings,
-    },
-    '*'
-  );
+  // Решаем пресеты для первичной загрузки (чтобы оверлей работал сразу)
+  let initialOverlayPresets = null;
+  if (pitchSettings.overlayEnabled && Array.isArray(pitchSettings.overlayPresets) && pitchSettings.overlayPresets.length > 0) {
+    const defaultPresetValues = { ...pitchSettings };
+    delete defaultPresetValues.blacklistPatterns; delete defaultPresetValues.toggleState;
+    delete defaultPresetValues.eqPresets; delete defaultPresetValues.globalPresets;
+    delete defaultPresetValues.overlayPresets; delete defaultPresetValues.overlayEnabled;
+    delete defaultPresetValues.optimisationDelay;
+
+    const allPresets = { default: { values: defaultPresetValues }, ...(pitchSettings.globalPresets || {}) };
+    const uniqueIds = [...new Set(pitchSettings.overlayPresets)];
+    const rawPresets = uniqueIds.map(id => {
+      const pValues = allPresets[id]?.values || {};
+      return { id, values: { ...defaultPresetValues, ...pValues } };
+    });
+    const seen = new Set();
+    const unique = rawPresets.filter(p => {
+      const hash = JSON.stringify(p.values);
+      if (seen.has(hash)) return false;
+      seen.add(hash); return true;
+    });
+    if (unique.length > 0) initialOverlayPresets = unique.slice(0, 10);
+  }
+
+  window.postMessage({
+    type: "PITCH_UPDATE",
+    settings: pitchSettings,
+    overlayPresets: initialOverlayPresets,
+    overlayConfig: { MAX_OVERLAY_CHAINS: 10, MAX_SIGNALSMITH_CHAINS: 2 }
+  }, "*")
 })();

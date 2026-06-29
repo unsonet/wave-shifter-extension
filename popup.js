@@ -1,5 +1,11 @@
 const simpleModal = globalThis['simpleModal'];
 (async () => {
+    // --- НАСТРОЙКИ ОВЕРЛЕЯ И ПРОЦЕССОРОВ ---
+    const OVERLAY_CONFIG = {
+        MAX_OVERLAY_CHAINS: 10,
+        MAX_SIGNALSMITH_CHAINS: 2
+    };
+
     const DEFAULT_SETTINGS = {
         pitchValueSemitones: 0,
         pitchValueCents: 0,
@@ -31,8 +37,10 @@ const simpleModal = globalThis['simpleModal'];
         compressorRatio: 12,
         compressorAttack: 3,
         compressorRelease: 250,
-        dolbyEnabled: false,
-
+        dolbyEnabled: !1,
+        overlayEnabled: !1,
+        overlayPresets: [],
+        globalPresets: {}
     };
 
     const SECTION_DEFAULTS = {
@@ -135,22 +143,29 @@ const simpleModal = globalThis['simpleModal'];
         compressorAttackVal = document.getElementById("compressorAttackVal"),
         compressorReleaseSlider = document.getElementById("compressorRelease"),
         compressorReleaseVal = document.getElementById("compressorReleaseVal"),
-        dolbyEnabledCheck = document.getElementById("dolbyEnabled")
+        dolbyEnabledCheck = document.getElementById("dolbyEnabled"),
+        globalPresetSelect = document.getElementById("globalPresetSelect"),
+        overlayCheck = document.getElementById("overlay"),
+        globalPresetsBtn = document.getElementById("globalPresetsBtn"),
+        globalPresetNameInput = document.getElementById("globalPresetNameInput"),
+        globalPresetAddBtn = document.getElementById("globalPresetAddBtn"),
+        globalPresetList = document.getElementById("globalPresetList");
 
 
-    let currentSettings = await (async function loadSettings() {
+    let currentSettings = await async function loadSettings() {
         const result = await chrome.storage.local.get("pitchSettings");
         let defaultSettings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
         const saved = result.pitchSettings || {};
-
         return {
             ...defaultSettings,
             ...saved,
             eqGains: saved.eqGains || defaultSettings.eqGains,
             blacklistPatterns: saved.blacklistPatterns || defaultSettings.blacklistPatterns,
-            eqPresets: saved.eqPresets || {}
-        };
-    })();
+            eqPresets: saved.eqPresets || {},
+            globalPresets: saved.globalPresets || {},
+            overlayPresets: saved.overlayPresets || []
+        }
+    }();
 
     function syncVisualSlider(inputEl) {
         const min = parseFloat(inputEl.min), max = parseFloat(inputEl.max);
@@ -164,20 +179,197 @@ const simpleModal = globalThis['simpleModal'];
 
     let applyTimeout = null;
 
-    async function scheduleApply() {
-        if (currentSettings.optimisationDelay) {
-            // Режим жесткой оптимизации: ждем 150мс после остановки ползунка
-            if (applyTimeout) clearTimeout(applyTimeout);
-            applyTimeout = setTimeout(async () => { applyTimeout = null; await applySettings(); }, 150);
-        } else {
-            // ИДЕАЛЬНО ПЛАВНЫЙ РЕЖИМ: Троттлинг 16мс (ровно 60 FPS)
-            // Это позволяет ползунку двигаться без рывков, но не спамит браузер миллионами сообщений
-            if (applyTimeout) return;
-            applyTimeout = setTimeout(async () => {
-                applyTimeout = null;
-                await applySettings();
-            }, 16);
+    function syncUIToActivePresets() {
+        if (isOverlayActive()) {
+            const activeIds = currentSettings.overlayPresets || [];
+            if (!activeIds.includes("custom")) return;
+            if (!currentSettings.globalPresets) currentSettings.globalPresets = {};
+            if (!currentSettings.globalPresets["custom"]) currentSettings.globalPresets["custom"] = { name: "Custom", values: {} };
+            const pValues = currentSettings.globalPresets["custom"].values;
+            pValues.pitchValueSemitones = currentSettings.pitchValueSemitones;
+            pValues.pitchValueCents = currentSettings.pitchValueCents;
+            pValues.windowSizeMilliseconds = currentSettings.windowSizeMilliseconds;
+            pValues.applySmartProcessing = currentSettings.applySmartProcessing;
+            pValues.volumeBoostDb = currentSettings.volumeBoostDb;
+            pValues.eqGains = [...currentSettings.eqGains];
+            pValues.reverbType = currentSettings.reverbType;
+            pValues.reverbWet = currentSettings.reverbWet;
+            pValues.stereoWiden = currentSettings.stereoWiden;
+            pValues.channelBalance = currentSettings.channelBalance;
+            return;
         }
+
+        // 1. ПРОВЕРЯЕМ: стали ли настройки полностью дефолтными? (неважно, какой пресет сейчас выбран)
+        let isDefault = true;
+        for (const key in DEFAULT_SETTINGS) {
+            if (["blacklistPatterns", "toggleState", "eqPresets", "globalPresets", "overlayPresets", "overlayEnabled", "optimisationDelay"].includes(key)) continue;
+            if (JSON.stringify(DEFAULT_SETTINGS[key]) !== JSON.stringify(currentSettings[key])) { isDefault = false; break; }
+        }
+
+        // Если стали дефолтом — жестко возвращаем на Default и прерываем функцию
+        if (isDefault) {
+            if (currentSettings.globalPreset !== "default") {
+                currentSettings.globalPreset = "default";
+                delete currentSettings.globalPresets?.custom; // Убираем за собой мусор
+                globalPresetSelect.value = "default";
+                updateGlobalPresetSelectUI();
+            }
+            return;
+        }
+
+        // 2. ЕСЛИ ЕСТЬ ОТЛИЧИЯ ОТ ДЕФОЛТА
+        if (currentSettings.globalPreset === "default") {
+            currentSettings.globalPreset = "custom";
+            if (!currentSettings.globalPresets) currentSettings.globalPresets = {};
+            if (!currentSettings.globalPresets["custom"]) currentSettings.globalPresets["custom"] = { name: "Custom", values: {} };
+            globalPresetSelect.value = "custom";
+            updateGlobalPresetSelectUI();
+        }
+
+        const targetId = currentSettings.globalPreset;
+        if (!currentSettings.globalPresets[targetId]) return;
+
+        const pValues = currentSettings.globalPresets[targetId].values;
+        pValues.pitchValueSemitones = currentSettings.pitchValueSemitones;
+        pValues.pitchValueCents = currentSettings.pitchValueCents;
+        pValues.windowSizeMilliseconds = currentSettings.windowSizeMilliseconds;
+        pValues.applySmartProcessing = currentSettings.applySmartProcessing;
+        pValues.volumeBoostDb = currentSettings.volumeBoostDb;
+        pValues.eqGains = [...currentSettings.eqGains];
+        pValues.reverbType = currentSettings.reverbType;
+        pValues.reverbWet = currentSettings.reverbWet;
+        pValues.stereoWiden = currentSettings.stereoWiden;
+        pValues.channelBalance = currentSettings.channelBalance;
+    }
+
+    async function scheduleApply() {
+        syncUIToActivePresets(); // Синхронизируем ПЕРЕД отправкой
+        if (currentSettings.optimisationDelay) applyTimeout && clearTimeout(applyTimeout), applyTimeout = setTimeout(async () => { applyTimeout = null, await applySettings() }, 150); else { if (applyTimeout) return; applyTimeout = setTimeout(async () => { applyTimeout = null, await applySettings() }, 16) }
+    }
+
+    function isOverlayActive() {
+        return !!currentSettings.overlayEnabled;
+    }
+
+    function getAllGlobalPresets() {
+        return { default: { name: "Default", values: { ...DEFAULT_SETTINGS } }, ...(currentSettings.globalPresets || {}) };
+    }
+
+    function getActiveOverlayPresets() {
+        if (!isOverlayActive()) return null;
+        let selectedIds = Array.from(globalPresetSelect.selectedOptions).map(o => o.value).filter(Boolean);
+        if (selectedIds.length === 0) {
+            selectedIds = currentSettings.overlayPresets || ["default"];
+        }
+
+        // 1. Убираем полные дубликаты ID (если юзер каким-то образом выбрал один и тот же пресет дважды)
+        const uniqueIds = [...new Set(selectedIds)];
+
+        const all = getAllGlobalPresets();
+        const rawPresets = uniqueIds.map(id => {
+            const presetValues = all[id]?.values || {};
+            return {
+                id: id,
+                values: { ...DEFAULT_SETTINGS, ...presetValues }
+            };
+        });
+
+        // 2. Убираем пресеты с абсолютно идентичными настройками (например, Default и нетронутый Custom)
+        const seenSettings = new Set();
+        const uniquePresets = rawPresets.filter(preset => {
+            const settingsHash = JSON.stringify(preset.values);
+            if (seenSettings.has(settingsHash)) {
+                return false; // Настройки уже есть в массиве, пропускаем эту цепь
+            }
+            seenSettings.add(settingsHash);
+            return true;
+        });
+
+        return uniquePresets.slice(0, OVERLAY_CONFIG.MAX_OVERLAY_CHAINS);
+    }
+
+    function switchToCustomIfNeeded() {
+        // В режиме оверлея не переключаем, там юзер сам выбирает пресеты мышкой
+        if (isOverlayActive()) return;
+
+        if (currentSettings.globalPreset === "default") {
+            currentSettings.globalPreset = "custom";
+            if (!currentSettings.globalPresets) currentSettings.globalPresets = {};
+
+            const presetValues = {};
+            for (const key in DEFAULT_SETTINGS) {
+                if (!["blacklistPatterns", "toggleState", "eqPresets", "globalPresets", "overlayPresets", "overlayEnabled", "optimisationDelay"].includes(key)) {
+                    presetValues[key] = JSON.parse(JSON.stringify(currentSettings[key]));
+                }
+            }
+            currentSettings.globalPresets["custom"] = { name: "Custom", values: presetValues };
+
+            // Принудительно даем команду селектору переключиться визуально
+            globalPresetSelect.value = "custom";
+            updateGlobalPresetSelectUI();
+        }
+    }
+
+    function toggleGlobalUIControls(disabled) {
+        const sections = [speedSettingsPanel, dynamicsPanel, surroundPanel];
+        sections.forEach(s => {
+            s.querySelectorAll('input, select, button').forEach(el => el.disabled = disabled);
+            if (disabled) s.classList.add('disabled-section'); else s.classList.remove('disabled-section');
+        });
+    }
+
+    function updateGlobalPresetSelectUI() {
+        const all = getAllGlobalPresets();
+        const currentVal = globalPresetSelect.value;
+        globalPresetSelect.innerHTML = "";
+        for (const [id, preset] of Object.entries(all)) {
+            const opt = document.createElement("option");
+            opt.value = id;
+            opt.textContent = preset.name;
+            opt.selected = isOverlayActive() ? (currentSettings.overlayPresets || []).includes(id) : (id === currentSettings.globalPreset);
+            globalPresetSelect.appendChild(opt);
+        }
+    }
+
+    function renderGlobalPresetList() {
+        const all = getAllGlobalPresets();
+        globalPresetList.innerHTML = "";
+        for (const [id, preset] of Object.entries(all)) {
+            if (id === "default" || id === "custom") continue; // Скрываем системные пресеты
+            const row = document.createElement("div");
+            row.className = "blacklist-item";
+            row.dataset.id = id;
+            const nameInp = document.createElement("input");
+            nameInp.type = "text"; nameInp.value = preset.name; nameInp.spellcheck = false;
+            nameInp.className = "blacklist-item-input"; nameInp.style.flex = "1";
+            row.appendChild(nameInp);
+            const del = document.createElement("button");
+            del.type = "button"; del.textContent = "×"; del.className = "blacklist-item-delete btn-vk secondary";
+            row.appendChild(del);
+            globalPresetList.appendChild(row);
+        }
+    }
+
+    async function addGlobalPreset() {
+        let name = globalPresetNameInput.value.trim() || "My Preset";
+        let id = name.toLowerCase().replace(/\s+/g, "_");
+        let counter = 1;
+        while (getAllGlobalPresets()[id]) id = `${name.toLowerCase().replace(/\s+/g, "_")}_${counter++}`;
+
+        // Сохраняем только параллельные настройки
+        const presetValues = {};
+        for (const key in DEFAULT_SETTINGS) {
+            if (!["blacklistPatterns", "toggleState", "eqPresets", "globalPresets", "overlayPresets", "overlayEnabled", "optimisationDelay"].includes(key)) {
+                presetValues[key] = JSON.parse(JSON.stringify(currentSettings[key]));
+            }
+        }
+
+        currentSettings.globalPresets = { ...(currentSettings.globalPresets || {}), [id]: { name, values: presetValues } };
+        currentSettings.globalPreset = id;
+        globalPresetNameInput.value = "";
+        renderGlobalPresetList();
+        updateGlobalPresetSelectUI();
+        scheduleApply();
     }
 
     function getAllEqPresets() { return { ...BUILT_IN_EQ_PRESETS, ...(currentSettings.eqPresets || {}) }; }
@@ -208,24 +400,16 @@ const simpleModal = globalThis['simpleModal'];
         });
     }
 
-    document.addEventListener('click', (e) => {
-        const resetIcon = e.target.closest('.reset-icon');
+    document.addEventListener("click", e => {
+        const resetIcon = e.target.closest(".reset-icon");
         if (!resetIcon) return;
-
-        e.stopPropagation();
-        e.preventDefault();
-
-        const sectionId = resetIcon.dataset.section;
-        const defaults = SECTION_DEFAULTS[sectionId];
-        if (!defaults) return;
-
-        for (const key in defaults) {
-            currentSettings[key] = Array.isArray(defaults[key]) ? [...defaults[key]] : defaults[key];
+        e.stopPropagation(), e.preventDefault();
+        const sectionId = resetIcon.dataset.section, defaults = SECTION_DEFAULTS[sectionId];
+        if (defaults) {
+            for (const key in defaults) currentSettings[key] = Array.isArray(defaults[key]) ? [...defaults[key]] : defaults[key];
+            updateUI(), scheduleApply()
         }
-
-        updateUI();
-        scheduleApply();
-    });
+    })
 
     function updateEqPresetSelectUI() {
         const select = eqPresetSelect, all = getAllEqPresets();
@@ -300,9 +484,14 @@ const simpleModal = globalThis['simpleModal'];
             compressorReleaseSlider.value = currentSettings.compressorRelease,
             compressorReleaseVal.textContent = currentSettings.compressorRelease + " ms",
             dolbyEnabledCheck.checked = currentSettings.dolbyEnabled,
-
-            optimisationDelayCheck.checked = currentSettings.optimisationDelay || false;
-
+            optimisationDelayCheck.checked = currentSettings.optimisationDelay || !1,
+            overlayCheck.checked = currentSettings.overlayEnabled || !1,
+            globalPresetSelect.multiple = overlayCheck.checked
+        // Восстанавливаем выделение в мультиселекте при загрузке
+        if (overlayCheck.checked) {
+            const activeIds = currentSettings.overlayPresets || ["default"];
+            Array.from(globalPresetSelect.options).forEach(opt => { opt.selected = activeIds.includes(opt.value) });
+        }
         document.querySelectorAll('.range-slider[style*="vertical"] input').forEach((input, i) => {
             const targetVal = currentSettings.eqGains[i] !== undefined ? currentSettings.eqGains[i] : 50;
             if (input.value !== String(targetVal)) {
@@ -334,10 +523,27 @@ const simpleModal = globalThis['simpleModal'];
     }
 
     async function applySettings() {
+        // ЖЕЛЕЗОБЕТОННАЯ ЗАЩИТА: если в currentSettings пресеты случайно затерлись пустым объектом, 
+        // но в storage они есть, мы их не удаляем.
+        const storageSnap = await chrome.storage.local.get("pitchSettings");
+        const savedPresets = storageSnap.pitchSettings?.globalPresets;
+        if (savedPresets && Object.keys(savedPresets).length > 0 &&
+            (!currentSettings.globalPresets || Object.keys(currentSettings.globalPresets).length === 0)) {
+            currentSettings.globalPresets = savedPresets;
+        }
+
         await chrome.storage.local.set({ pitchSettings: currentSettings });
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        const [tab] = await chrome.tabs.query({ active: !0, currentWindow: !0 });
         if (tab?.id) {
-            try { await chrome.tabs.sendMessage(tab.id, { type: "updateSettings", settings: currentSettings }); } catch (e) { }
+            try {
+                const payload = {
+                    type: "updateSettings",
+                    settings: currentSettings,
+                    overlayPresets: getActiveOverlayPresets(),
+                    overlayConfig: OVERLAY_CONFIG
+                };
+                await chrome.tabs.sendMessage(tab.id, payload)
+            } catch (e) { }
         }
         await refreshSiteStatus();
     }
@@ -503,13 +709,12 @@ const simpleModal = globalThis['simpleModal'];
                     updateEqualizerGraph(); updateEqPresetSelectUI();
                 }
             }
-            updateSectionResetIcons();
-            scheduleApply();
+            updateSectionResetIcons(), switchToCustomIfNeeded(), scheduleApply();
         });
     });
 
-    smartCheck.addEventListener("change", e => { currentSettings.applySmartProcessing = e.target.checked; updateSectionResetIcons(); scheduleApply(); });
-    preservePitchCheck.addEventListener("change", e => { currentSettings.preservePitch = e.target.checked; updateSectionResetIcons(); scheduleApply(); });
+    smartCheck.addEventListener("change", e => { currentSettings.applySmartProcessing = e.target.checked, updateSectionResetIcons(), switchToCustomIfNeeded(), scheduleApply() });
+    preservePitchCheck.addEventListener("change", e => { currentSettings.preservePitch = e.target.checked, updateSectionResetIcons(), switchToCustomIfNeeded(), scheduleApply() });
 
     optimisationDelayCheck.addEventListener("change", e => {
         currentSettings.optimisationDelay = e.target.checked;
@@ -519,24 +724,41 @@ const simpleModal = globalThis['simpleModal'];
     dolbyEnabledCheck.addEventListener("change", e => {
         currentSettings.dolbyEnabled = e.target.checked;
         updateSectionResetIcons();
+        switchToCustomIfNeeded();
         scheduleApply();
     })
 
     reverbPresetSelect.addEventListener("change", e => {
         currentSettings.reverbType = e.target.value === "null" ? null : e.target.value;
         updateSectionResetIcons();
+        switchToCustomIfNeeded();
         scheduleApply();
     });
 
 
 
-    eqPresetSelect.addEventListener("change", e => { applyEqPresetToUI(e.target.value); updateSectionResetIcons(); scheduleApply(); });
-
+    eqPresetSelect.addEventListener("change", e => { applyEqPresetToUI(e.target.value), updateSectionResetIcons(), switchToCustomIfNeeded(), scheduleApply() })
     resetBtn.addEventListener("click", async () => {
+        // 1. СОХРАНЯЕМ пользовательские пресеты в безопасное место ДО сброса
+        const savedUserPresets = JSON.parse(JSON.stringify(currentSettings.globalPresets || {}));
+        delete savedUserPresets.custom; // Временный системный пресет удаляем
+
         let defaultSettings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
-        currentSettings = { ...defaultSettings, blacklistPatterns: currentSettings.blacklistPatterns || [], toggleState: currentSettings.toggleState || defaultSettings.toggleState, eqPresets: currentSettings.eqPresets || {} };
-        updateUI(); renderBlacklistList(); await applySettings();
-    });
+
+        // 2. Собираем настройки, гарантируя что пресеты не затрутся дефолтным пустым объектом
+        currentSettings = {
+            ...defaultSettings,
+            blacklistPatterns: currentSettings.blacklistPatterns || [],
+            toggleState: currentSettings.toggleState || defaultSettings.toggleState,
+            eqPresets: currentSettings.eqPresets || {},
+            globalPresets: savedUserPresets, // Возвращаем только то, что создал юзер
+            globalPreset: "default",
+            overlayEnabled: false,
+            overlayPresets: []
+        };
+
+        updateUI(), renderBlacklistList(), renderGlobalPresetList(), updateGlobalPresetSelectUI(), await applySettings()
+    })
 
     blacklistBtn.addEventListener("click", () => {
         renderBlacklistList();
@@ -610,7 +832,80 @@ const simpleModal = globalThis['simpleModal'];
         }
     });
 
+    // --- ОБРАБОТЧИКИ ОВЕРЛЕЯ И ГЛОБАЛЬНЫХ ПРЕСЕТОВ ---
+    overlayCheck.addEventListener("change", e => {
+        currentSettings.overlayEnabled = e.target.checked;
+        globalPresetSelect.multiple = e.target.checked;
+        if (e.target.checked) {
+            const sel = globalPresetSelect.value;
+            currentSettings.overlayPresets = [sel === "custom" ? "default" : sel];
+            toggleGlobalUIControls(true);
+        } else {
+            currentSettings.globalPreset = globalPresetSelect.value || "default";
+            toggleGlobalUIControls(false);
+        }
+        updateGlobalPresetSelectUI();
+        scheduleApply();
+    });
+
+    globalPresetSelect.addEventListener("change", e => {
+        if (isOverlayActive()) {
+            currentSettings.overlayPresets = Array.from(globalPresetSelect.selectedOptions).map(o => o.value);
+        } else {
+            currentSettings.globalPreset = globalPresetSelect.value;
+            applyGlobalPresetToUI(globalPresetSelect.value);
+        }
+        scheduleApply();
+    });
+
+    function applyGlobalPresetToUI(presetId) {
+        const preset = getAllGlobalPresets()[presetId];
+        if (!preset) return;
+        currentSettings.globalPreset = presetId;
+        const vals = preset.values;
+        for (const key in vals) {
+            if (key === "eqGains") continue; // EQ пресеты независимы
+            currentSettings[key] = JSON.parse(JSON.stringify(vals[key]));
+        }
+        updateUI();
+    }
+
+    globalPresetsBtn.addEventListener("click", () => {
+        renderGlobalPresetList();
+        simpleModal.openModal("globalPresetModal", "#globalPresetNameInput");
+    });
+
+    globalPresetAddBtn.addEventListener("click", addGlobalPreset);
+    globalPresetNameInput.addEventListener("keydown", async e => {
+        if (e.key === "Enter") { e.preventDefault(); await addGlobalPreset(); }
+        if (e.key === "Escape") simpleModal.closeModal("globalPresetModal");
+    });
+
+    globalPresetList.addEventListener("input", e => {
+        const row = e.target.closest(".blacklist-item");
+        if (!row) return;
+        const id = row.dataset.id;
+        const nameInp = row.querySelector("input:nth-child(1)");
+        currentSettings.globalPresets[id].name = nameInp.value.trim() || "Unnamed";
+        if (currentSettings.globalPreset === id || (currentSettings.overlayPresets || []).includes(id)) updateGlobalPresetSelectUI();
+        scheduleApply();
+    });
+
+    globalPresetList.addEventListener("click", async e => {
+        const btn = e.target.closest(".blacklist-item-delete");
+        if (!btn) return;
+        const id = btn.closest(".blacklist-item")?.dataset.id;
+        if (id) {
+            delete currentSettings.globalPresets[id];
+            if (currentSettings.globalPreset === id) applyGlobalPresetToUI("default");
+            currentSettings.overlayPresets = (currentSettings.overlayPresets || []).filter(pId => pId !== id);
+            renderGlobalPresetList();
+            updateGlobalPresetSelectUI();
+            scheduleApply();
+        }
+    });
+
     [volumeBoostPanel, pitchSettingsPanel, speedSettingsPanel, eqSettingsPanel, spatialSettingsPanel, dynamicsPanel, surroundPanel].forEach(p => p.addEventListener("toggle", saveToggleState));
 
-    updateUI(); renderBlacklistList(); renderEqPresetList(); await refreshSiteStatus();
+    updateUI(), renderBlacklistList(), renderEqPresetList(), renderGlobalPresetList(), updateGlobalPresetSelectUI(), await refreshSiteStatus()
 })();
