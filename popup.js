@@ -1,3 +1,4 @@
+const simpleModal = globalThis['simpleModal'];
 (async () => {
     const DEFAULT_SETTINGS = {
         pitchValueSemitones: 0,
@@ -69,7 +70,7 @@
         }
     };
 
-    const BUILT_IN_PRESETS = {
+    const BUILT_IN_EQ_PRESETS = {
         flat: { name: "Flat", genres: [], values: Array(10).fill(50) },
         rock: { name: "Rock", genres: ["rock"], values: [60, 55, 40, 30, 50, 65, 70, 65, 60, 55] },
         pop: { name: "Pop", genres: ["pop"], values: [45, 50, 65, 70, 60, 45, 40, 45, 50, 50] },
@@ -94,9 +95,6 @@
     const eqSvgLine = document.querySelector(".eq-svg-line");
     const eqSvgLineShadow = document.querySelector(".eq-svg-line-shadow");
     const blacklistBtn = document.getElementById("blacklistBtn");
-    const blacklistModal = document.getElementById("blacklistModal");
-    const blacklistModalClose = document.getElementById("blacklistModalClose");
-    const blacklistModalCloseBtn = document.getElementById("blacklistModalCloseBtn");
     const blacklistInput = document.getElementById("blacklistInput");
     const blacklistAddBtn = document.getElementById("blacklistAddBtn");
     const blacklistList = document.getElementById("blacklistList");
@@ -109,14 +107,12 @@
     const volumeBoostSlider = document.getElementById("volumeBoostDb");
     const volumeBoostVal = document.getElementById("volumeBoostVal");
     const volumeBoostPanel = document.getElementById("volumeBoostPanel");
-    const managePresetsBtn = document.getElementById("managePresetsBtn");
-    const presetModal = document.getElementById("presetModal");
-    const presetModalClose = document.getElementById("presetModalClose");
-    const presetModalCloseBtn = document.getElementById("presetModalCloseBtn");
-    const presetNameInput = document.getElementById("presetNameInput");
-    const presetGenresInput = document.getElementById("presetGenresInput");
-    const presetAddBtn = document.getElementById("presetAddBtn");
-    const presetList = document.getElementById("presetList");
+    const eqPresetManageBtn = document.getElementById("eqPresetManageBtn");
+
+    const eqPresetNameInput = document.getElementById("eqPresetNameInput");
+    const eqPresetGenresInput = document.getElementById("eqPresetGenresInput");
+    const eqPresetAddBtn = document.getElementById("eqPresetAddBtn");
+    const eqPresetList = document.getElementById("eqPresetList");
     const optimisationDelayCheck = document.getElementById("optimisationDelay");
     const spatialSettingsPanel = document.getElementById("spatialSettingsPanel"),
         reverbPresetSelect = document.getElementById("reverbPreset"),
@@ -184,8 +180,8 @@
         }
     }
 
-    function getAllPresets() { return { ...BUILT_IN_PRESETS, ...(currentSettings.eqPresets || {}) }; }
-    function isBuiltIn(id) { return !!BUILT_IN_PRESETS[id]; }
+    function getAllEqPresets() { return { ...BUILT_IN_EQ_PRESETS, ...(currentSettings.eqPresets || {}) }; }
+    function isBuiltInEqPreset(id) { return !!BUILT_IN_EQ_PRESETS[id]; }
 
     function updateSectionResetIcons() {
         document.querySelectorAll('.reset-icon').forEach(icon => {
@@ -231,8 +227,8 @@
         scheduleApply();
     });
 
-    function updatePresetSelectUI() {
-        const select = eqPresetSelect, all = getAllPresets();
+    function updateEqPresetSelectUI() {
+        const select = eqPresetSelect, all = getAllEqPresets();
         select.innerHTML = "";
         for (const [id, preset] of Object.entries(all)) {
             if (id === "custom" && currentSettings.eqPreset !== "custom") continue;
@@ -243,8 +239,8 @@
         }
     }
 
-    function applyPresetToUI(presetId) {
-        const preset = getAllPresets()[presetId];
+    function applyEqPresetToUI(presetId) {
+        const preset = getAllEqPresets()[presetId];
         if (preset) {
             currentSettings.eqPreset = presetId;
             currentSettings.eqGains = [...preset.values];
@@ -253,7 +249,7 @@
                 syncVisualSlider(input);
             });
             updateEqualizerGraph();
-            updatePresetSelectUI();
+            updateEqPresetSelectUI();
         }
     }
 
@@ -318,7 +314,7 @@
 
         document.querySelectorAll(".range-slider input").forEach(syncVisualSlider);
         updateEqualizerGraph();
-        updatePresetSelectUI();
+        updateEqPresetSelectUI();
         updateSectionResetIcons();
     }
 
@@ -377,12 +373,6 @@
         await chrome.storage.local.set({ pitchSettings: currentSettings });
     }
 
-    function closeBlacklistModal() {
-        blacklistBtn.focus();
-        blacklistModal.classList.remove("open");
-        blacklistModal.setAttribute("aria-hidden", "true");
-    }
-
     function renderBlacklistList() {
         const patterns = Array.isArray(currentSettings.blacklistPatterns) ? currentSettings.blacklistPatterns : [];
         blacklistList.innerHTML = "";
@@ -417,46 +407,40 @@
         renderBlacklistList();
     }
 
-    function closePresetModal() {
-        managePresetsBtn.focus();
-        presetModal.classList.remove("open");
-        presetModal.setAttribute("aria-hidden", "true");
-    }
-
-    function renderPresetList() {
-        const all = getAllPresets();
-        presetList.innerHTML = "";
+    function renderEqPresetList() {
+        const all = getAllEqPresets();
+        eqPresetList.innerHTML = "";
         for (const [id, preset] of Object.entries(all)) {
             const row = document.createElement("div");
             row.className = "blacklist-item"; row.dataset.id = id;
             const nameInp = document.createElement("input");
             nameInp.type = "text"; nameInp.value = preset.name; nameInp.spellcheck = false;
-            nameInp.className = "blacklist-item-input"; nameInp.style.flex = "1"; nameInp.disabled = isBuiltIn(id);
+            nameInp.className = "blacklist-item-input"; nameInp.style.flex = "1"; nameInp.disabled = isBuiltInEqPreset(id);
             const genresInp = document.createElement("input");
             genresInp.type = "text"; genresInp.value = preset.genres.join(", "); genresInp.spellcheck = false;
-            genresInp.className = "blacklist-item-input"; genresInp.style.flex = "1"; genresInp.disabled = isBuiltIn(id);
+            genresInp.className = "blacklist-item-input"; genresInp.style.flex = "1"; genresInp.disabled = isBuiltInEqPreset(id);
             row.appendChild(nameInp); row.appendChild(genresInp);
-            if (!isBuiltIn(id)) {
+            if (!isBuiltInEqPreset(id)) {
                 const del = document.createElement("button");
                 del.type = "button"; del.textContent = "×"; del.className = "blacklist-item-delete btn-vk secondary";
                 row.appendChild(del);
             }
-            presetList.appendChild(row);
+            eqPresetList.appendChild(row);
         }
     }
 
-    async function addPreset() {
-        let name = presetNameInput.value.trim() || "My Preset";
-        const genresStr = presetGenresInput.value.trim();
+    async function addEqPreset() {
+        let name = eqPresetNameInput.value.trim() || "My EQ Preset";
+        const genresStr = eqPresetGenresInput.value.trim();
         const genres = genresStr ? genresStr.split(",").map(g => g.trim().toLowerCase()).filter(Boolean) : [];
         let id = name.toLowerCase().replace(/\s+/g, "_"), counter = 1;
-        while (getAllPresets()[id]) id = `${name.toLowerCase().replace(/\s+/g, "_")}_${counter++}`;
+        while (getAllEqPresets()[id]) id = `${name.toLowerCase().replace(/\s+/g, "_")}_${counter++}`;
 
         currentSettings.eqPresets = { ...(currentSettings.eqPresets || {}) };
         currentSettings.eqPresets[id] = { name, genres, values: [...currentSettings.eqGains] };
         currentSettings.eqPreset = id;
-        presetNameInput.value = ""; presetGenresInput.value = "";
-        renderPresetList(); updatePresetSelectUI(); scheduleApply();
+        eqPresetNameInput.value = ""; eqPresetGenresInput.value = "";
+        renderEqPresetList(); updateEqPresetSelectUI(); scheduleApply();
     }
 
     document.querySelectorAll(".range-slider input").forEach(input => {
@@ -516,7 +500,7 @@
                     currentSettings.eqGains[index] = val;
                     currentSettings.eqPreset = "custom";
                     currentSettings.eqPresets = { ...(currentSettings.eqPresets || {}), custom: { name: "Custom", genres: [], values: [...currentSettings.eqGains] } };
-                    updateEqualizerGraph(); updatePresetSelectUI();
+                    updateEqualizerGraph(); updateEqPresetSelectUI();
                 }
             }
             updateSectionResetIcons();
@@ -532,8 +516,8 @@
         scheduleApply()
     });
 
-    dolbyEnabledCheck.addEventListener("change",e=>{
-        currentSettings.dolbyEnabled=e.target.checked;
+    dolbyEnabledCheck.addEventListener("change", e => {
+        currentSettings.dolbyEnabled = e.target.checked;
         updateSectionResetIcons();
         scheduleApply();
     })
@@ -546,7 +530,7 @@
 
 
 
-    eqPresetSelect.addEventListener("change", e => { applyPresetToUI(e.target.value); updateSectionResetIcons(); scheduleApply(); });
+    eqPresetSelect.addEventListener("change", e => { applyEqPresetToUI(e.target.value); updateSectionResetIcons(); scheduleApply(); });
 
     resetBtn.addEventListener("click", async () => {
         let defaultSettings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
@@ -554,12 +538,19 @@
         updateUI(); renderBlacklistList(); await applySettings();
     });
 
-    blacklistBtn.addEventListener("click", () => { renderBlacklistList(); blacklistModal.classList.add("open"); blacklistModal.setAttribute("aria-hidden", "false"); blacklistInput.focus(); });
-    blacklistModalClose.addEventListener("click", closeBlacklistModal);
-    blacklistModalCloseBtn.addEventListener("click", closeBlacklistModal);
-    blacklistAddBtn.addEventListener("click", addBlacklistPattern);
-    blacklistInput.addEventListener("keydown", async e => { if (e.key === "Enter") { e.preventDefault(); await addBlacklistPattern(); } if (e.key === "Escape") closeBlacklistModal(); });
+    blacklistBtn.addEventListener("click", () => {
+        renderBlacklistList();
+        simpleModal.openModal("blacklistModal", "#blacklistInput");
+    });
 
+    blacklistAddBtn.addEventListener("click", addBlacklistPattern);
+    blacklistInput.addEventListener("keydown", async e => {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            await addBlacklistPattern();
+        }
+        if (e.key === "Escape") simpleModal.closeModal("blacklistModal");
+    });
     blacklistList.addEventListener("input", async e => {
         const inp = e.target.closest(".blacklist-item-input"); if (!inp) return;
         const row = inp.closest(".blacklist-item"), idx = Number(row?.dataset.index);
@@ -580,43 +571,46 @@
         await applySettings(); renderBlacklistList();
     });
 
-    managePresetsBtn.addEventListener("click", () => { renderPresetList(); presetModal.classList.add("open"); presetModal.setAttribute("aria-hidden", "false"); presetNameInput.focus(); });
-    presetModalClose.addEventListener("click", closePresetModal);
-    presetModalCloseBtn.addEventListener("click", closePresetModal);
-    presetAddBtn.addEventListener("click", addPreset);
-    presetNameInput.addEventListener("keydown", async e => { if (e.key === "Enter") { e.preventDefault(); await addPreset(); } if (e.key === "Escape") closePresetModal(); });
-    presetGenresInput.addEventListener("keydown", async e => { if (e.key === "Enter") { e.preventDefault(); await addPreset(); } if (e.key === "Escape") closePresetModal(); });
-
-    presetList.addEventListener("input", e => {
+    eqPresetManageBtn.addEventListener("click", () => {
+        renderEqPresetList();
+        simpleModal.openModal("eqPresetModal", "#eqPresetNameInput");
+    });
+    eqPresetAddBtn.addEventListener("click", addEqPreset);
+    eqPresetNameInput.addEventListener("keydown", async e => {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            await addEqPreset();
+        }
+        if (e.key === "Escape") simpleModal.closeModal("eqPresetModal");
+    });
+    eqPresetGenresInput.addEventListener("keydown", async e => {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            await addEqPreset();
+        }
+        if (e.key === "Escape") simpleModal.closeModal("eqPresetModal");
+    });
+    eqPresetList.addEventListener("input", e => {
         const row = e.target.closest(".blacklist-item"); if (!row) return;
-        const id = row.dataset.id; if (isBuiltIn(id)) return;
+        const id = row.dataset.id; if (isBuiltInEqPreset(id)) return;
         const nameInp = row.querySelector("input:nth-child(1)"), genresInp = row.querySelector("input:nth-child(2)");
         currentSettings.eqPresets[id].name = nameInp.value.trim() || "Unnamed";
         currentSettings.eqPresets[id].genres = genresInp.value.split(",").map(g => g.trim().toLowerCase()).filter(Boolean);
-        if (currentSettings.eqPreset === id) updatePresetSelectUI();
+        if (currentSettings.eqPreset === id) updateEqPresetSelectUI();
         scheduleApply();
     });
 
-    presetList.addEventListener("click", async e => {
+    eqPresetList.addEventListener("click", async e => {
         const btn = e.target.closest(".blacklist-item-delete"); if (!btn) return;
         const id = btn.closest(".blacklist-item")?.dataset.id;
-        if (id && !isBuiltIn(id)) {
+        if (id && !isBuiltInEqPreset(id)) {
             delete currentSettings.eqPresets[id];
-            if (currentSettings.eqPreset === id) applyPresetToUI("flat");
-            renderPresetList(); scheduleApply();
+            if (currentSettings.eqPreset === id) applyEqPresetToUI("flat");
+            renderEqPresetList(); scheduleApply();
         }
     });
-
-    document.addEventListener("keydown", e => {
-        if (e.key === "Escape") {
-            if (blacklistModal.classList.contains("open")) closeBlacklistModal();
-            if (presetModal.classList.contains("open")) closePresetModal();
-        }
-    });
-    blacklistModal.addEventListener("click", e => { if (e.target === blacklistModal) closeBlacklistModal(); });
-    presetModal.addEventListener("click", e => { if (e.target === presetModal) closePresetModal(); });
 
     [volumeBoostPanel, pitchSettingsPanel, speedSettingsPanel, eqSettingsPanel, spatialSettingsPanel, dynamicsPanel, surroundPanel].forEach(p => p.addEventListener("toggle", saveToggleState));
 
-    updateUI(); renderBlacklistList(); renderPresetList(); await refreshSiteStatus();
+    updateUI(); renderBlacklistList(); renderEqPresetList(); await refreshSiteStatus();
 })();

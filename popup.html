@@ -109,7 +109,7 @@
                 <option value="classical">Classical</option>
                 <option value="bass">Bass Boost</option>
             </select>
-            <button id="managePresetsBtn" class="btn-vk link" type="button">Manage</button>
+            <button id="eqPresetManageBtn" class="btn-vk link" type="button">Manage</button>
         </div>
         <div class="eq-row">
             <div class="eq-container">
@@ -225,7 +225,7 @@
                 <div class="reset-icon" data-section="#dynamicsPanel"></div>
             </div>
         </summary>
-        
+
         <div class="control"><label>Threshold: <span id="compressorThresholdVal">-24 dB</span></label>
             <div class="range-slider" style="--orientation: horizontal;"><input type="range" id="compressorThreshold" min="-60" max="0" step="1" value="-24">
                 <div class="range-slider__track"></div>
@@ -275,31 +275,68 @@
         <input type="checkbox" id="optimisationDelay">
         <label>Optimization delay</label>
     </div>
-    <div class="row row-buttons">
-        <button id="blacklistBtn" class="btn-vk" type="button">Blacklist</button>
-        <button id="resetBtn" class="btn-vk" type="button">Reset</button>
-        <div id="siteStatus"><span id="siteStatusDot"></span><span id="siteStatusText">active</span></div>
+    <div class="row controls">
+
+        <!-- <div class="select-row">
+            <span>Preset:</span>
+            <select id="globalPresetSelect">
+                <option value="default">Default</option>
+            </select>
+            <div class="row">
+                <input type="checkbox" id="overlay">
+                <label>Overlay</label>
+            </div>
+        </div> -->
+        <div class="button-row">
+            <button id="blacklistBtn" class="btn-vk" type="button">Blacklist</button>
+            <button id="resetBtn" class="btn-vk" type="button">Reset</button>
+            <!-- <button id="presetsBtn" class="btn-vk" type="button">Presets</button> -->
+            <div id="siteStatus"><span id="siteStatusDot"></span><span id="siteStatusText">active</span></div>
+        </div>
+
     </div>
     <div id="blacklistModal" class="simple-modal" aria-hidden="true">
-        <div class="simple-modal__backdrop" id="blacklistModalClose"></div>
+        <div class="simple-modal__backdrop"></div>
         <div class="simple-modal__panel">
             <div class="simple-modal__header">
-                <div style="font-weight:600;">Blacklist</div><button id="blacklistModalCloseBtn" type="button">×</button>
+                <div style="font-weight:600;">Blacklist</div> <button class="close" type="button">×</button>
             </div>
             <div class="simple-modal__add"><input id="blacklistInput" type="text" placeholder="https://www.youtube.com/*" spellcheck="false" /><button id="blacklistAddBtn" class="btn-vk" type="button">Add</button></div>
             <div id="blacklistList" class="blacklist-list"></div>
         </div>
     </div>
-    <div id="presetModal" class="simple-modal" aria-hidden="true">
-        <div class="simple-modal__backdrop" id="presetModalClose"></div>
+
+    <div id="eqPresetModal" class="simple-modal" aria-hidden="true">
+        <div class="simple-modal__backdrop"></div>
         <div class="simple-modal__panel">
             <div class="simple-modal__header">
-                <div style="font-weight:600;">Equalizer Presets</div><button id="presetModalCloseBtn" type="button">×</button>
+                <div style="font-weight:600;">Equalizer Presets</div> <button class="close" type="button">×</button>
             </div>
-            <div class="simple-modal__add" style="flex-wrap:wrap;gap:6px;"><input id="presetNameInput" type="text" placeholder="Preset name" spellcheck="false" style="flex:1;min-width:100px;" /><input id="presetGenresInput" type="text" placeholder="Genres (rock, pop)" spellcheck="false" style="flex:1;min-width:100px;" /><button id="presetAddBtn" class="btn-vk" type="button">Save Current</button></div>
-            <div id="presetList" class="blacklist-list"></div>
+            <div class="simple-modal__add" style="flex-wrap:wrap;gap:6px;">
+                <input id="eqPresetNameInput" type="text" placeholder="EQ Preset name" spellcheck="false" style="flex:1;min-width:100px;" />
+                <input id="eqPresetGenresInput" type="text" placeholder="Genres (rock, pop)" spellcheck="false" style="flex:1;min-width:100px;" />
+                <button id="eqPresetAddBtn" class="btn-vk" type="button">Save Current</button>
+            </div>
+            <div id="eqPresetList" class="blacklist-list"></div>
         </div>
     </div>
+
+    <div id="globalPresetModal" class="simple-modal" aria-hidden="true">
+    <div class="simple-modal__backdrop" id="globalPresetModalClose"></div>
+    <div class="simple-modal__panel">
+        <div class="simple-modal__header">
+            <div style="font-weight:600;">Presets</div>
+            <button id="globalPresetModalCloseBtn" type="button">×</button>
+        </div>
+        <div class="simple-modal__add" style="flex-wrap:wrap;gap:6px;">
+            <input id="globalPresetNameInput" type="text" placeholder="Preset name" spellcheck="false" style="flex:1;min-width:100px;" />
+            <button id="globalPresetAddBtn" class="btn-vk" type="button">Save Current</button>
+        </div>
+        <div id="globalPresetList" class="blacklist-list"></div>
+    </div>
+</div>
+
+    <script src="src/js/simple-modal.js"></script>
     <script src="popup.js"></script>
 </body>
 

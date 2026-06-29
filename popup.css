@@ -446,17 +446,45 @@ details>.control:last-child {
 /*end details*/
 
 /*footer*/
-.row-buttons {
+.controls {
   background-color: #1e1e2f;
-    z-index: 1;
-    margin-bottom: -13px;
-    bottom: 0;
-    position: sticky;
-    padding-top: 10px;
-    padding-bottom: 10px;
-    display: flex;
-    gap: 8px;
-    align-items: center;
+  z-index: 1;
+  margin-bottom: -13px;
+  bottom: 0;
+  position: sticky;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+}
+
+.controls .select-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+}
+
+.controls .select-row .row{
+  margin: 0px;
+}
+
+.controls .select-row select {
+  flex: 1;
+}
+
+.controls .button-row {
+  width: 100%;
+  display: flex;
+  gap: 8px;
+  flex-direction: row;
+}
+
+.controls .button-row button {
+  padding-left: 8px;
+  padding-right: 8px;
 }
 
 #siteStatus {
