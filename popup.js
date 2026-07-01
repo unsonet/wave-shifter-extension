@@ -5,6 +5,7 @@ const simpleModal = globalThis['simpleModal'];
         MAX_OVERLAY_CHAINS: 10,
         MAX_SIGNALSMITH_CHAINS: 2
     };
+    let userDisabledCustomInOverlay = false;
 
     const DEFAULT_SETTINGS = {
         pitchValueSemitones: 0,
@@ -180,56 +181,35 @@ const simpleModal = globalThis['simpleModal'];
     let applyTimeout = null;
 
     function syncUIToActivePresets() {
-        if (isOverlayActive()) {
-            const activeIds = currentSettings.overlayPresets || [];
-            if (!activeIds.includes("custom")) return;
-            if (!currentSettings.globalPresets) currentSettings.globalPresets = {};
-            if (!currentSettings.globalPresets["custom"]) currentSettings.globalPresets["custom"] = { name: "Custom", values: {} };
-            const pValues = currentSettings.globalPresets["custom"].values;
-            pValues.pitchValueSemitones = currentSettings.pitchValueSemitones;
-            pValues.pitchValueCents = currentSettings.pitchValueCents;
-            pValues.windowSizeMilliseconds = currentSettings.windowSizeMilliseconds;
-            pValues.applySmartProcessing = currentSettings.applySmartProcessing;
-            pValues.volumeBoostDb = currentSettings.volumeBoostDb;
-            pValues.eqGains = [...currentSettings.eqGains];
-            pValues.reverbType = currentSettings.reverbType;
-            pValues.reverbWet = currentSettings.reverbWet;
-            pValues.stereoWiden = currentSettings.stereoWiden;
-            pValues.channelBalance = currentSettings.channelBalance;
-            return;
-        }
-
-        // 1. ПРОВЕРЯЕМ: стали ли настройки полностью дефолтными? (неважно, какой пресет сейчас выбран)
+        // 1. Проверяем, стали ли настройки полностью дефолтными (для обоих режимов)
         let isDefault = true;
         for (const key in DEFAULT_SETTINGS) {
             if (["blacklistPatterns", "toggleState", "eqPresets", "globalPresets", "overlayPresets", "overlayEnabled", "optimisationDelay"].includes(key)) continue;
             if (JSON.stringify(DEFAULT_SETTINGS[key]) !== JSON.stringify(currentSettings[key])) { isDefault = false; break; }
         }
 
-        // Если стали дефолтом — жестко возвращаем на Default и прерываем функцию
         if (isDefault) {
-            if (currentSettings.globalPreset !== "default") {
+            if (currentSettings.globalPreset === "custom") {
                 currentSettings.globalPreset = "default";
-                delete currentSettings.globalPresets?.custom; // Убираем за собой мусор
+                delete currentSettings.globalPresets?.custom;
                 globalPresetSelect.value = "default";
+                updateGlobalPresetSelectUI();
+            }
+            if (isOverlayActive() && currentSettings.overlayPresets?.includes("custom")) {
+                currentSettings.overlayPresets = currentSettings.overlayPresets.filter(id => id !== "custom");
+                delete currentSettings.globalPresets?.custom; // Удаляем за собой невидимый пресет из памяти
                 updateGlobalPresetSelectUI();
             }
             return;
         }
 
-        // 2. ЕСЛИ ЕСТЬ ОТЛИЧИЯ ОТ ДЕФОЛТА
-        if (currentSettings.globalPreset === "default") {
-            currentSettings.globalPreset = "custom";
-            if (!currentSettings.globalPresets) currentSettings.globalPresets = {};
-            if (!currentSettings.globalPresets["custom"]) currentSettings.globalPresets["custom"] = { name: "Custom", values: {} };
-            globalPresetSelect.value = "custom";
-            updateGlobalPresetSelectUI();
+        // 2. Если есть отличия от дефолта — создаем/обновляем пресет Custom
+        if (!currentSettings.globalPresets) currentSettings.globalPresets = {};
+        if (!currentSettings.globalPresets["custom"]) {
+            currentSettings.globalPresets["custom"] = { name: "Custom", values: {} };
         }
 
-        const targetId = currentSettings.globalPreset;
-        if (!currentSettings.globalPresets[targetId]) return;
-
-        const pValues = currentSettings.globalPresets[targetId].values;
+        const pValues = currentSettings.globalPresets["custom"].values;
         pValues.pitchValueSemitones = currentSettings.pitchValueSemitones;
         pValues.pitchValueCents = currentSettings.pitchValueCents;
         pValues.windowSizeMilliseconds = currentSettings.windowSizeMilliseconds;
@@ -240,6 +220,21 @@ const simpleModal = globalThis['simpleModal'];
         pValues.reverbWet = currentSettings.reverbWet;
         pValues.stereoWiden = currentSettings.stereoWiden;
         pValues.channelBalance = currentSettings.channelBalance;
+
+        // 3. Обновляем интерфейс в зависимости от режима
+        if (isOverlayActive()) {
+            // Добавляем Custom в список ТОЛЬКО если юзер его ранее не снимал вручную
+            if (!userDisabledCustomInOverlay && !currentSettings.overlayPresets.includes("custom")) {
+                currentSettings.overlayPresets.push("custom");
+                updateGlobalPresetSelectUI();
+            }
+        } else {
+            if (currentSettings.globalPreset === "default") {
+                currentSettings.globalPreset = "custom";
+                globalPresetSelect.value = "custom";
+                updateGlobalPresetSelectUI();
+            }
+        }
     }
 
     async function scheduleApply() {
@@ -320,14 +315,26 @@ const simpleModal = globalThis['simpleModal'];
 
     function updateGlobalPresetSelectUI() {
         const all = getAllGlobalPresets();
-        const currentVal = globalPresetSelect.value;
         globalPresetSelect.innerHTML = "";
+
+        // 1. Сначала просто отрисовываем все опции без выделения
         for (const [id, preset] of Object.entries(all)) {
             const opt = document.createElement("option");
             opt.value = id;
             opt.textContent = preset.name;
-            opt.selected = isOverlayActive() ? (currentSettings.overlayPresets || []).includes(id) : (id === currentSettings.globalPreset);
             globalPresetSelect.appendChild(opt);
+        }
+
+        // 2. Жестко и надежно управляем выделением в зависимости от режима селектора
+        if (globalPresetSelect.multiple) {
+            // Режим OVERLAY: выделяем то, что лежит в массиве overlayPresets
+            const activeIds = currentSettings.overlayPresets || [];
+            Array.from(globalPresetSelect.options).forEach(opt => {
+                opt.selected = activeIds.includes(opt.value);
+            });
+        } else {
+            // Обычный режим: выделяем один текущий пресет
+            globalPresetSelect.value = currentSettings.globalPreset || "default";
         }
     }
 
@@ -839,9 +846,11 @@ const simpleModal = globalThis['simpleModal'];
         if (e.target.checked) {
             const sel = globalPresetSelect.value;
             currentSettings.overlayPresets = [sel === "custom" ? "default" : sel];
+            userDisabledCustomInOverlay = false; // Сбрасываем запрет при новом включении
             toggleGlobalUIControls(true);
         } else {
             currentSettings.globalPreset = globalPresetSelect.value || "default";
+            userDisabledCustomInOverlay = false; // Сбрасываем запрет при выключении
             toggleGlobalUIControls(false);
         }
         updateGlobalPresetSelectUI();
@@ -850,7 +859,14 @@ const simpleModal = globalThis['simpleModal'];
 
     globalPresetSelect.addEventListener("change", e => {
         if (isOverlayActive()) {
-            currentSettings.overlayPresets = Array.from(globalPresetSelect.selectedOptions).map(o => o.value);
+            const newIds = Array.from(globalPresetSelect.selectedOptions).map(o => o.value);
+            currentSettings.overlayPresets = newIds;
+            // Запоминаем намерение юзера
+            if (!newIds.includes("custom")) {
+                userDisabledCustomInOverlay = true; // Юзер сам снял
+            } else {
+                userDisabledCustomInOverlay = false; // Юзер поставил обратно
+            }
         } else {
             currentSettings.globalPreset = globalPresetSelect.value;
             applyGlobalPresetToUI(globalPresetSelect.value);

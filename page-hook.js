@@ -52,12 +52,14 @@
     } catch (e) { }
 
     async function rebuildGraph() {
-        // ЗАМОК: Предотвращаем параллельный запуск при быстрых кликах
         if (rebuildGraph._isRunning) return;
         rebuildGraph._isRunning = true;
 
         try {
             if (!audioCtx || !sourceGain) return;
+
+            // --- ДИАГНОСТИКА ЭХА: СТАТИСТИКА СБОРКИ ---
+            const chainsToBuild = overlayPresetsData || [settings];
 
             // 1. АГРЕССИВНАЯ ОЧИСТКА СТАРЫХ ЦЕПОЧЕК
             parallelChains.forEach(chain => {
@@ -112,12 +114,17 @@
             };
             connectGlobalEnd(); globalLimiterNode.connect(audioCtx.destination);
 
-            const chainsToBuild = overlayPresetsData || [settings];
+
+
+            // Проверяем CSP для WASM (используем существующую функцию)
+            const isWasmBlocked = await isWasmBlockedByCSP();
+
             for (let i = 0; i < chainsToBuild.length; i++) {
                 try {
                     // Извлекаем настройки, адаптируясь под новый формат { id, values }
                     const pSet = chainsToBuild[i].values || chainsToBuild[i];
-                    const useSignalsmith = i < overlayConfig.MAX_SIGNALSMITH_CHAINS;
+                    // Если WASM заблокирован политиками сайта, принудительно используем Correlator для всех цепей
+                    const useSignalsmith = !isWasmBlocked && (i < overlayConfig.MAX_SIGNALSMITH_CHAINS);
                     const chainEqs = EQ_BANDS.map(band => { const f = audioCtx.createBiquadFilter(); f.type = band.type; f.frequency.value = band.frequency; if (band.q) f.Q.value = band.q; return f; });
                     for (let j = 0; j < chainEqs.length - 1; j++) chainEqs[j].connect(chainEqs[j + 1]);
                     const chainSplitter = audioCtx.createChannelSplitter(2), chainMerger = audioCtx.createChannelMerger(2);
@@ -149,7 +156,13 @@
                     if (!pitchNode) {
                         try { await audioCtx.audioWorklet.addModule(fallbackWorkletUrl); } catch (e) { }
                         pitchNode = new AudioWorkletNode(audioCtx, "pitch-correlator", { numberOfInputs: 2, numberOfOutputs: 1, channelCount: 2, outputChannelCount: [2] });
-                        const cGain = (val, dest) => { const g = audioCtx.createGain(); if (typeof val === "number") g.gain.value = val; else val.connect(g); g.connect(dest); return g; };
+                        const cGain = (val, dest) => {
+                            const g = audioCtx.createGain();
+                            if (typeof val === "number") g.gain.value = val;
+                            else { val.connect(g.gain); g.gain.value = 0; }
+                            g.connect(dest);
+                            return g;
+                        };
 
                         const oscillatorsToStore = []; // Сохраняем осцилляторы, чтобы потом их убить
                         const cConstantSource = audioCtx.createConstantSource(); cConstantSource.offset.value = 1; oscillatorsToStore.push(cConstantSource);
@@ -179,9 +192,6 @@
                         };
                         procType = "correlator";
                     }
-
-                    if (procType === "signalsmith") { sourceGain.connect(pitchNode); pitchNode.connect(chainEqs[0]); }
-                    else if (procType === "correlator" && correlatorNodes) { sourceGain.connect(correlatorNodes.delay1); sourceGain.connect(correlatorNodes.delay2); pitchNode.connect(chainEqs[0]); }
 
                     if (procType === "signalsmith") { sourceGain.connect(pitchNode); pitchNode.connect(chainEqs[0]); }
                     else if (procType === "correlator" && correlatorNodes) { sourceGain.connect(correlatorNodes.delay1); sourceGain.connect(correlatorNodes.delay2); pitchNode.connect(chainEqs[0]); }
@@ -224,11 +234,22 @@
             }
             const gains = pSet.eqGains || Array(10).fill(50); chain.eqs.forEach((f, i) => { f.gain.value = (gains[i] - 50) / 5; });
             const widenVal = -(pSet.stereoWiden || 0) / 100; chain.subL.gain.value = widenVal; chain.subR.gain.value = widenVal;
-            chain.wet.gain.value = (pSet.reverbWet || 0) / 100;
+            // КРИТИЧЕСКИЙ ФИКС: Если тип ревербера "null", жестко глушим wet канал.
+            // В некоторых браузерах ConvolverNode с buffer=null создает задержку в 1 блок (эхо).
             if (pSet.reverbType && pSet.reverbType !== "null") {
-                if (!convolverCache.has(pSet.reverbType)) { fetch(soundsBaseUrl + pSet.reverbType + ".wav").then(r => r.arrayBuffer()).then(buf => audioCtx.decodeAudioData(buf)).then(buffer => { convolverCache.set(pSet.reverbType, buffer); chain.convolver.buffer = buffer; }).catch(e => console.error(e)); }
-                else { chain.convolver.buffer = convolverCache.get(pSet.reverbType); }
-            } else { chain.convolver.buffer = null; }
+                chain.wet.gain.value = (pSet.reverbWet || 0) / 100;
+                if (!convolverCache.has(pSet.reverbType)) {
+                    fetch(soundsBaseUrl + pSet.reverbType + ".wav").then(r => r.arrayBuffer()).then(buf => audioCtx.decodeAudioData(buf)).then(buffer => {
+                        convolverCache.set(pSet.reverbType, buffer);
+                        chain.convolver.buffer = buffer;
+                    }).catch(e => console.error(e));
+                } else {
+                    chain.convolver.buffer = convolverCache.get(pSet.reverbType);
+                }
+            } else {
+                chain.wet.gain.value = 0; // Глушим wet, чтобы избежать фленжера/эха от null buffer
+                chain.convolver.buffer = null;
+            }
             chain.balance.pan.value = (pSet.channelBalance || 0) / 100;
         });
         if (globalCompressorNode) { globalCompressorNode.threshold.value = settings.compressorThreshold || 0; globalCompressorNode.knee.value = settings.compressorKnee || 30; globalCompressorNode.ratio.value = settings.compressorRatio || 1; globalCompressorNode.attack.value = (settings.compressorAttack || 3) / 1000; globalCompressorNode.release.value = (settings.compressorRelease || 250) / 1000; }
@@ -453,7 +474,19 @@
 
     async function ensurePitchGraph(ctx) {
         if (!ctx) throw new Error("No AudioContext");
-        if (overlayMode) { if (!audioCtx || audioCtx !== ctx) audioCtx = ctx; if (!sourceGain) sourceGain = ctx.createGain(); bindResumeHandlers(ctx); return; }
+        if (overlayMode) {
+            const contextChanged = !audioCtx || audioCtx !== ctx;
+            if (contextChanged) {
+                // Безопасное переключение: НЕ закрываем старый контекст, чтобы не убить Howler
+                audioCtx = ctx;
+                if (!sourceGain) sourceGain = ctx.createGain();
+                bindResumeHandlers(ctx);
+                await rebuildGraph();
+            } else {
+                bindResumeHandlers(ctx);
+            }
+            return;
+        }
         if (audioCtx && audioCtx !== ctx) {
             try { pitchNode?.disconnect() } catch { }
             try { gainNode?.disconnect() } catch { }
@@ -801,34 +834,24 @@
         if (mediaEl && mediaEl.nodeType === Node.ELEMENT_NODE && !connectingMediaElements.has(mediaEl)) {
             connectingMediaElements.add(mediaEl);
             try {
-                // ФИКС ДЛЯ WIKIPEDIA И CORS (Логика из v1.2):
-                // Если файл с чужого домена - принудительно включаем ему CORS и мягко перезагружаем.
-                const ensureCorsEnabled = () => {
+                // 1. Проверка и применение CORS
+                if (!(() => {
                     let src = mediaEl.currentSrc || mediaEl.src;
-
-                    // Если на самом элементе нет URL, ищем внутри <source> (как делает Wikipedia)
                     if (!src) {
-                        const sourceEl = mediaEl.querySelector('source');
+                        const sourceEl = mediaEl.querySelector("source");
                         if (sourceEl) src = sourceEl.src;
                     }
-                    if (!src) return true; // Нет URL, пропускаем проверку
-
-                    // Если тот же домен - проблем нет
+                    if (!src) return true;
                     if (new URL(src, location.href).origin === location.origin) return true;
+                    if ("anonymous" === mediaEl.crossOrigin) return true;
 
-                    // Если CORS уже включен - проблем нет
-                    if (mediaEl.crossOrigin === "anonymous") return true;
-
-                    // Чужой домен без CORS. Включаем и перезагружаем файл бесшовно.
-                    console.log("[WS] Enabling CORS for:", src);
                     mediaEl.crossOrigin = "anonymous";
-                    mediaEl.__ws_justCorsReloaded = true; // Ставим флажок
+                    mediaEl.__ws_justCorsReloaded = true;
 
                     const t = mediaEl.currentTime;
                     const wasPlaying = !mediaEl.paused;
-                    mediaEl.src = src; // Это заставит браузер запросить файл с заголовком CORS
+                    mediaEl.src = src;
 
-                    // Восстанавливаем воспроизведение после перезагрузки
                     mediaEl.addEventListener("loadedmetadata", async () => {
                         try { mediaEl.currentTime = t; } catch (e) { }
                         if (wasPlaying) {
@@ -836,34 +859,79 @@
                         }
                     }, { once: true });
 
-                    return false; // Сообщаем, что нужно прервать текущее подключение (файл перезагружается)
-                };
-
-                if (!ensureCorsEnabled()) {
-                    connectingMediaElements.delete(mediaEl);
-                    return; // Прерываемся. Как только файл перезагрузится, сработает событие 'play' и мы подключим его заново уже с CORS
+                    return false;
+                })()) {
+                    return void connectingMediaElements.delete(mediaEl);
                 }
 
-                const ctx = audioCtx && audioCtx.state !== "closed" ? audioCtx : new (window.AudioContext || window.webkitAudioContext);
+                // 2. Получение или создание AudioContext
+                const ctx = (audioCtx && "closed" !== audioCtx.state)
+                    ? audioCtx
+                    : new (window.AudioContext || window.webkitAudioContext)();
+
                 bindResumeHandlers(ctx);
                 await ensurePitchGraph(ctx);
 
+                // 3. Навешиваем слушатели скорости (один раз)
                 if (!mediaEl.__speedListenersAdded) {
                     mediaEl.addEventListener("ratechange", handleRateChange);
                     mediaEl.__speedListenersAdded = true;
-                    mediaEl.addEventListener("emptied", () => { mediaEl.__pitchConnected = false; mediaEl.__pitchSource = null; connectMediaElement(mediaEl); });
+
+                    // ФИКС YOUTUBE SHORTS: Не уничтожаем __pitchSource при смене видео!
+                    mediaEl.addEventListener("emptied", () => {
+                        mediaEl.__pitchConnected = false;
+                        // НЕ ДЕЛАЕМ: mediaEl.__pitchSource = null; 
+                        // Источник звука привязан к тегу намертво браузером. 
+                        // Если мы обнулим его, при следующем play будет InvalidStateError.
+                        // Просто пытаемся переподключить его к графу.
+                        if (mediaEl.__pitchSource) {
+                            try { mediaEl.__pitchSource.connect(sourceGain); } catch (e) { }
+                            mediaEl.__pitchConnected = true;
+                            if (overlayMode) refreshOverlayNodes(); else refreshAllNodes();
+                        }
+                    });
                 }
+
+                // 4. Применяем настройки скорости
                 applySpeedSettings(mediaEl);
 
+                // 5. Создание источника звука
                 if (!mediaEl.__pitchSource) {
-                    const source = audioCtx.createMediaElementSource(mediaEl);
+                    let source = null;
+
+                    // ЖЕЛЕЗОБЕТОННАЯ ЗАЩИТА ОТ INVALID STATE ERROR
+                    try {
+                        source = audioCtx.createMediaElementSource(mediaEl);
+                    } catch (e) {
+                        if (e.name === "InvalidStateError") {
+                            console.warn("[WS] Элемент уже захвачен этим AudioContext. Пропускаем пере-захват.");
+                            mediaEl.__pitchConnected = true;
+                            return; // Просто выходим, чтобы не крашить страницу
+                        }
+                        throw e;
+                    }
+
                     mediaEl.__pitchSource = source;
+
+                    // Очистка мертвых элементов (Reddit/HLS), но БЕЗ обнуления __pitchSource
+                    connectedMediaElements.forEach(oldEl => {
+                        if (oldEl !== mediaEl && oldEl.__pitchSource) {
+                            const isInDom = document.body.contains(oldEl) ||
+                                (oldEl.getRootNode && oldEl.getRootNode().host && oldEl.getRootNode().contains(oldEl));
+                            const isActuallyPlaying = !oldEl.paused && oldEl.readyState >= 2;
+
+                            if (!isInDom || !isActuallyPlaying) {
+                                try { oldEl.__pitchSource.disconnect(); } catch (e) { }
+                                // НЕ ДЕЛАЕМ: oldEl.__pitchSource = null; 
+                                // Иначе YouTube Shorts упадет с ошибкой при возврате к этому видео
+                                oldEl.__pitchConnected = false;
+                            }
+                        }
+                    });
+
                     source.connect(sourceGain);
 
-                    // ФИКС БАГА "ДУЭТА" НА WIKIPEDIA: 
-                    // Применяем хак с mute ТОЛЬКО если мы только что принудительно перезагрузили файл для CORS.
-                    // На Spotify, Youtube и других сайтах этот флажок не стоит, поэтому их внутренний
-                    // аудио-граф не ломается при переключении треков.
+                    // 6. Фикс для перезагруженных CORS элементов
                     if (mediaEl.__ws_justCorsReloaded) {
                         const wasMuted = mediaEl.muted;
                         mediaEl.muted = true;
@@ -871,28 +939,26 @@
                         delete mediaEl.__ws_justCorsReloaded;
                     }
 
-                    // ФИКС ДЛЯ REDDIT AUTOPLAY: 
-                    // Reddit запускает видео замученным. Клик по "Unmute" — это user gesture.
-                    // Перехватываем его, чтобы разблокировать AudioContext прямо в этот момент.
                     if (!mediaEl.__unmuteHandlerBound) {
                         mediaEl.__unmuteHandlerBound = true;
-                        mediaEl.addEventListener('unmute', () => {
-                            if (audioCtx && audioCtx.state === 'suspended') {
-                                audioCtx.resume();
-                            }
+                        mediaEl.addEventListener("unmute", () => {
+                            if (audioCtx && "suspended" === audioCtx.state) audioCtx.resume();
                         });
                     }
                 }
 
+                // 7. Финализация
                 connectedMediaElements.add(mediaEl);
-                mediaEl.__pitchConnected = !0;
-                // Если включен оверлей, но граф еще не собрали (например при первой загрузке страницы) — собираем
+                mediaEl.__pitchConnected = true;
+
                 if (overlayMode && !overlayGraphBuilt) {
                     await rebuildGraph();
                 } else if (!overlayMode) {
                     refreshAllNodes();
                 }
+
             } catch (e) {
+                console.error("[WS] connectMediaElement error:", e);
                 mediaEl.__pitchConnected = false;
             } finally {
                 connectingMediaElements.delete(mediaEl);
@@ -1083,21 +1149,36 @@
         HTMLMediaElement.prototype.play = function (...args) {
             const mediaEl = this;
             try {
-                if (mediaEl && (mediaEl.tagName === "AUDIO" || mediaEl.tagName === "VIDEO")) {
-                    queueMicrotask(async () => {
-                        try {
-                            if (await connectMediaElement(mediaEl)) return;
-                            if (siteIsBlacklisted) return;
-                            applySpeedSettings(mediaEl);
+                !mediaEl || "AUDIO" !== mediaEl.tagName && "VIDEO" !== mediaEl.tagName || queueMicrotask(async () => {
+                    try {
+                        if (mediaEl.__pitchSource && !mediaEl.__pitchConnected) {
+                            try {
+                                // ПРИНУДИТЕЛЬНЫЙ РЕЗЮМ КОНТЕКСТА (Решает замолкаание на YouTube Shorts)
+                                if (audioCtx && audioCtx.state === 'suspended') {
+                                    await audioCtx.resume();
+                                }
 
-                            refreshAllNodes();
+                                // ПЕРЕПОДКЛЮЧАЕМ ЭЛЕМЕНТ, если он был отключен
+                                if (mediaEl.__pitchSource && !mediaEl.__pitchConnected) {
+                                    try { mediaEl.__pitchSource.connect(sourceGain); } catch (e) { }
+                                    mediaEl.__pitchConnected = true;
+                                }
+                            } catch (e) {
+                                // Если источник сдох (YouTube уничтожил тег и создал новый), сбрасываем и пересоздаем
+                                mediaEl.__pitchSource = null;
+                                await connectMediaElement(mediaEl);
+                                return;
+                            }
+                        }
 
-
-                        } catch (e) { }
-                    });
-                }
+                        if (await connectMediaElement(mediaEl)) return;
+                        if (siteIsBlacklisted) return;
+                        applySpeedSettings(mediaEl);
+                        if (overlayMode) { refreshOverlayNodes(); } else { refreshAllNodes(); }
+                    } catch (e) { }
+                })
             } catch (e) { }
-            return originalPlay.apply(mediaEl, args);
+            return originalPlay.apply(mediaEl, args)
         };
     })();
 
