@@ -256,12 +256,8 @@ const simpleModal = globalThis['simpleModal'];
         if (selectedIds.length === 0) {
             selectedIds = currentSettings.overlayPresets || ["default"];
         }
-
-        // 1. Убираем полные дубликаты ID (если юзер каким-то образом выбрал один и тот же пресет дважды)
-        const uniqueIds = [...new Set(selectedIds)];
-
         const all = getAllGlobalPresets();
-        const rawPresets = uniqueIds.map(id => {
+        const rawPresets = selectedIds.map(id => {
             const presetValues = all[id]?.values || {};
             return {
                 id: id,
@@ -269,13 +265,21 @@ const simpleModal = globalThis['simpleModal'];
             };
         });
 
-        // 2. Убираем пресеты с абсолютно идентичными настройками (например, Default и нетронутый Custom)
+        // Дедупликация: не грузим CPU идентичными цепями, если юзер выбрал 2 одинаковых пресета
         const seenSettings = new Set();
         const uniquePresets = rawPresets.filter(preset => {
-            const settingsHash = JSON.stringify(preset.values);
-            if (seenSettings.has(settingsHash)) {
-                return false; // Настройки уже есть в массиве, пропускаем эту цепь
-            }
+            // Очищаем от служебного мусора перед сравнением
+            const cleanValues = { ...preset.values };
+            delete cleanValues.blacklistPatterns;
+            delete cleanValues.toggleState;
+            delete cleanValues.eqPresets;
+            delete cleanValues.globalPresets;
+            delete cleanValues.overlayPresets;
+            delete cleanValues.overlayEnabled;
+            delete cleanValues.optimisationDelay;
+
+            const settingsHash = JSON.stringify(cleanValues);
+            if (seenSettings.has(settingsHash)) return false;
             seenSettings.add(settingsHash);
             return true;
         });
@@ -844,13 +848,15 @@ const simpleModal = globalThis['simpleModal'];
         currentSettings.overlayEnabled = e.target.checked;
         globalPresetSelect.multiple = e.target.checked;
         if (e.target.checked) {
-            const sel = globalPresetSelect.value;
-            currentSettings.overlayPresets = [sel === "custom" ? "default" : sel];
-            userDisabledCustomInOverlay = false; // Сбрасываем запрет при новом включении
+            const sel = globalPresetSelect.value || "default";
+            // Берем ТОТ пресет, который сейчас выбран, даже если это Custom!
+            currentSettings.overlayPresets = [sel];
+            userDisabledCustomInOverlay = false;
             toggleGlobalUIControls(true);
         } else {
-            currentSettings.globalPreset = globalPresetSelect.value || "default";
-            userDisabledCustomInOverlay = false; // Сбрасываем запрет при выключении
+            // При выключении оверлея возвращаемся к тому пресету, который был активен
+            currentSettings.globalPreset = currentSettings.overlayPresets?.[0] || "default";
+            userDisabledCustomInOverlay = false;
             toggleGlobalUIControls(false);
         }
         updateGlobalPresetSelectUI();

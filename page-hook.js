@@ -39,7 +39,13 @@
                 });
                 const seen = new Set();
                 const unique = rawPresets.filter(p => {
-                    const hash = JSON.stringify(p.values);
+                    const cleanValues = { ...p.values };
+                    delete cleanValues.blacklistPatterns; delete cleanValues.toggleState;
+                    delete cleanValues.eqPresets; delete cleanValues.globalPresets;
+                    delete cleanValues.overlayPresets; delete cleanValues.overlayEnabled;
+                    delete cleanValues.optimisationDelay;
+
+                    const hash = JSON.stringify(cleanValues);
                     if (seen.has(hash)) return false;
                     seen.add(hash); return true;
                 });
@@ -154,43 +160,50 @@
                     } catch (e) { console.warn(`[WS] Chain ${i} Signalsmith failed, using Correlator`); }
 
                     if (!pitchNode) {
-                        try { await audioCtx.audioWorklet.addModule(fallbackWorkletUrl); } catch (e) { }
-                        pitchNode = new AudioWorkletNode(audioCtx, "pitch-correlator", { numberOfInputs: 2, numberOfOutputs: 1, channelCount: 2, outputChannelCount: [2] });
-                        const cGain = (val, dest) => {
-                            const g = audioCtx.createGain();
-                            if (typeof val === "number") g.gain.value = val;
-                            else { val.connect(g.gain); g.gain.value = 0; }
-                            g.connect(dest);
-                            return g;
-                        };
+                        try {
+                            try { await audioCtx.audioWorklet.addModule(fallbackWorkletUrl); } catch (e) { }
+                            pitchNode = new AudioWorkletNode(audioCtx, "pitch-correlator", { numberOfInputs: 2, numberOfOutputs: 1, channelCount: 2, outputChannelCount: [2] });
+                            const cGain = (val, dest) => {
+                                const g = audioCtx.createGain();
+                                if (typeof val === "number") g.gain.value = val;
+                                else { val.connect(g.gain); g.gain.value = 0; }
+                                g.connect(dest);
+                                return g;
+                            };
 
-                        const oscillatorsToStore = []; // Сохраняем осцилляторы, чтобы потом их убить
-                        const cConstantSource = audioCtx.createConstantSource(); cConstantSource.offset.value = 1; oscillatorsToStore.push(cConstantSource);
-                        const cSaw1 = createSawtooth(audioCtx, 0); oscillatorsToStore.push(cSaw1);
-                        const cSaw2 = createSawtooth(audioCtx, Math.PI); oscillatorsToStore.push(cSaw2);
-                        const cSine = createSine(audioCtx, 3 * Math.PI / 2); oscillatorsToStore.push(cSine);
-                        const cFreqSrc = audioCtx.createConstantSource(); cFreqSrc.offset.value = 0; oscillatorsToStore.push(cFreqSrc);
-                        const cWss = audioCtx.createConstantSource(); cWss.offset.value = 0; oscillatorsToStore.push(cWss);
+                            const oscillatorsToStore = []; // Сохраняем осцилляторы, чтобы потом их убить
+                            const cConstantSource = audioCtx.createConstantSource(); cConstantSource.offset.value = 1; oscillatorsToStore.push(cConstantSource);
+                            const cSaw1 = createSawtooth(audioCtx, 0); oscillatorsToStore.push(cSaw1);
+                            const cSaw2 = createSawtooth(audioCtx, Math.PI); oscillatorsToStore.push(cSaw2);
+                            const cSine = createSine(audioCtx, 3 * Math.PI / 2); oscillatorsToStore.push(cSine);
+                            const cFreqSrc = audioCtx.createConstantSource(); cFreqSrc.offset.value = 0; oscillatorsToStore.push(cFreqSrc);
+                            const cWss = audioCtx.createConstantSource(); cWss.offset.value = 0; oscillatorsToStore.push(cWss);
 
-                        cFreqSrc.connect(cSaw1.frequency); cFreqSrc.connect(cSaw2.frequency); cFreqSrc.connect(cSine.frequency);
-                        const cDelay1 = audioCtx.createDelay(), cDelay2 = audioCtx.createDelay();
-                        const cMakeFilter = dest => { const f = audioCtx.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = 1760; f.connect(dest); return f; };
-                        const cFilter1 = cMakeFilter(cGain(cWss, cDelay1.delayTime)); cSaw1.connect(cFilter1);
-                        const cFilter2 = cMakeFilter(cGain(cWss, cDelay2.delayTime)); cSaw2.connect(cFilter2);
-                        const cCsGain1 = cGain(0.5, cFilter1);
-                        const cCsGain2 = cGain(0.5, cFilter2);
-                        cConstantSource.connect(cCsGain1);
-                        cConstantSource.connect(cCsGain2);
-                        cDelay1.connect(pitchNode, 0, 0); cDelay2.connect(pitchNode, 0, 1); cSine.connect(pitchNode.parameters.get("c"));
+                            cFreqSrc.connect(cSaw1.frequency); cFreqSrc.connect(cSaw2.frequency); cFreqSrc.connect(cSine.frequency);
+                            const cDelay1 = audioCtx.createDelay(), cDelay2 = audioCtx.createDelay();
+                            const cMakeFilter = dest => { const f = audioCtx.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = 1760; f.connect(dest); return f; };
+                            const cFilter1 = cMakeFilter(cGain(cWss, cDelay1.delayTime)); cSaw1.connect(cFilter1);
+                            const cFilter2 = cMakeFilter(cGain(cWss, cDelay2.delayTime)); cSaw2.connect(cFilter2);
+                            const cCsGain1 = cGain(0.5, cFilter1);
+                            const cCsGain2 = cGain(0.5, cFilter2);
+                            cConstantSource.connect(cCsGain1);
+                            cConstantSource.connect(cCsGain2);
+                            cDelay1.connect(pitchNode, 0, 0); cDelay2.connect(pitchNode, 0, 1); cSine.connect(pitchNode.parameters.get("c"));
 
-                        const now = audioCtx.currentTime;
-                        try { oscillatorsToStore.forEach(n => n.start(now)); } catch (e) { }
+                            const now = audioCtx.currentTime;
+                            try { oscillatorsToStore.forEach(n => n.start(now)); } catch (e) { }
 
-                        correlatorNodes = {
-                            freqSrc: cFreqSrc, wss: cWss, delay1: cDelay1, delay2: cDelay2,
-                            oscillators: oscillatorsToStore // КРИТИЧНО ДЛЯ ОЧИСТКИ
-                        };
-                        procType = "correlator";
+                            correlatorNodes = {
+                                freqSrc: cFreqSrc, wss: cWss, delay1: cDelay1, delay2: cDelay2,
+                                oscillators: oscillatorsToStore
+                            };
+                            procType = "correlator";
+                        } catch (e) {
+                            // Если Correlator упал, отключаем питч для этой цепи, но НЕ молчим!
+                            console.warn(`[WS] Chain ${i} Correlator failed, bypassing pitch.`);
+                            pitchNode = null;
+                            procType = "bypass";
+                        }
                     }
 
                     if (procType === "signalsmith") { sourceGain.connect(pitchNode); pitchNode.connect(chainEqs[0]); }
@@ -834,6 +847,14 @@
         if (mediaEl && mediaEl.nodeType === Node.ELEMENT_NODE && !connectingMediaElements.has(mediaEl)) {
             connectingMediaElements.add(mediaEl);
             try {
+                // 0. КРИТИЧЕСКИЙ ФИКС ДЛЯ YOUTUBE SHORTS:
+                // Если элемент только что создан (нет src, нет текущего источника и нет данных), 
+                // НЕ влезаем в него. Даем сайту (YT) время прикрепить MediaSource/DASH поток.
+                // Наш перехват функции play() безопасно подключит граф, когда видео реально запустится.
+                if (mediaEl.readyState === 0 && !mediaEl.src && !mediaEl.currentSrc && !mediaEl.querySelector("source")) {
+                    return;
+                }
+
                 // 1. Проверка и применение CORS
                 if (!(() => {
                     let src = mediaEl.currentSrc || mediaEl.src;
@@ -842,6 +863,12 @@
                         if (sourceEl) src = sourceEl.src;
                     }
                     if (!src) return true;
+
+                    // КРИТИЧЕСКИЙ ФИКС ДЛЯ YOUTUBE SHORTS И REDDIT:
+                    // Никогда не трогаем blob:, data: ссылки и элементы, которые уже начали буферизацию (readyState > 0).
+                    // Иначе мы уничтожим MediaSource поток и видео зависнет намертво.
+                    if (src.startsWith('blob:') || src.startsWith('data:') || mediaEl.readyState > 0) return true;
+
                     if (new URL(src, location.href).origin === location.origin) return true;
                     if ("anonymous" === mediaEl.crossOrigin) return true;
 
@@ -1135,52 +1162,53 @@
 
     document.body ? startObserver() : document.addEventListener("DOMContentLoaded", startObserver);
 
-    document.addEventListener("play", async e => {
+    // Заменили 'play' на 'playing'. 
+    // Событие 'play' срабатывает в ту же миллисекунду, когда вызывается .play(), даже если буфер еще пуст (это ломало YT Shorts).
+    // Событие 'playing' срабатывает ТОЛЬКО когда браузер реально начал воспроизводить данные. Это на 100% безопасно.
+    document.addEventListener("playing", async e => {
         const el = e?.target;
-        if (el && (el.tagName === "AUDIO" || el.tagName === "VIDEO")) {
-            try { await connectMediaElement(el); } catch (err) { }
-        }
-    }, true);
+        if (el && ("AUDIO" === el.tagName || "VIDEO" === el.tagName)) try { await connectMediaElement(el) } catch (err) { }
+    }, !0),
 
-    (function hookMediaElementPlay() {
-        if (window.__pitchMediaPlayHooked) return;
-        window.__pitchMediaPlayHooked = true;
-        const originalPlay = HTMLMediaElement.prototype.play;
-        HTMLMediaElement.prototype.play = function (...args) {
-            const mediaEl = this;
-            try {
-                !mediaEl || "AUDIO" !== mediaEl.tagName && "VIDEO" !== mediaEl.tagName || queueMicrotask(async () => {
-                    try {
-                        if (mediaEl.__pitchSource && !mediaEl.__pitchConnected) {
-                            try {
-                                // ПРИНУДИТЕЛЬНЫЙ РЕЗЮМ КОНТЕКСТА (Решает замолкаание на YouTube Shorts)
-                                if (audioCtx && audioCtx.state === 'suspended') {
-                                    await audioCtx.resume();
-                                }
+        (function hookMediaElementPlay() {
+            if (window.__pitchMediaPlayHooked) return;
+            window.__pitchMediaPlayHooked = true;
+            const originalPlay = HTMLMediaElement.prototype.play;
+            HTMLMediaElement.prototype.play = function (...args) {
+                const mediaEl = this;
+                try {
+                    !mediaEl || "AUDIO" !== mediaEl.tagName && "VIDEO" !== mediaEl.tagName || queueMicrotask(async () => {
+                        try {
+                            if (mediaEl.__pitchSource && !mediaEl.__pitchConnected) {
+                                try {
+                                    // ПРИНУДИТЕЛЬНЫЙ РЕЗЮМ КОНТЕКСТА (Решает замолкаание на YouTube Shorts)
+                                    if (audioCtx && audioCtx.state === 'suspended') {
+                                        await audioCtx.resume();
+                                    }
 
-                                // ПЕРЕПОДКЛЮЧАЕМ ЭЛЕМЕНТ, если он был отключен
-                                if (mediaEl.__pitchSource && !mediaEl.__pitchConnected) {
-                                    try { mediaEl.__pitchSource.connect(sourceGain); } catch (e) { }
-                                    mediaEl.__pitchConnected = true;
+                                    // ПЕРЕПОДКЛЮЧАЕМ ЭЛЕМЕНТ, если он был отключен
+                                    if (mediaEl.__pitchSource && !mediaEl.__pitchConnected) {
+                                        try { mediaEl.__pitchSource.connect(sourceGain); } catch (e) { }
+                                        mediaEl.__pitchConnected = true;
+                                    }
+                                } catch (e) {
+                                    // Если источник сдох (YouTube уничтожил тег и создал новый), сбрасываем и пересоздаем
+                                    mediaEl.__pitchSource = null;
+                                    await connectMediaElement(mediaEl);
+                                    return;
                                 }
-                            } catch (e) {
-                                // Если источник сдох (YouTube уничтожил тег и создал новый), сбрасываем и пересоздаем
-                                mediaEl.__pitchSource = null;
-                                await connectMediaElement(mediaEl);
-                                return;
                             }
-                        }
 
-                        if (await connectMediaElement(mediaEl)) return;
-                        if (siteIsBlacklisted) return;
-                        applySpeedSettings(mediaEl);
-                        if (overlayMode) { refreshOverlayNodes(); } else { refreshAllNodes(); }
-                    } catch (e) { }
-                })
-            } catch (e) { }
-            return originalPlay.apply(mediaEl, args)
-        };
-    })();
+                            if (await connectMediaElement(mediaEl)) return;
+                            if (siteIsBlacklisted) return;
+                            applySpeedSettings(mediaEl);
+                            if (overlayMode) { refreshOverlayNodes(); } else { refreshAllNodes(); }
+                        } catch (e) { }
+                    })
+                } catch (e) { }
+                return originalPlay.apply(mediaEl, args)
+            };
+        })();
 
     (function probeHowler() {
         howlerProbeTimer || (howlerProbeTimer = setInterval(() => {
