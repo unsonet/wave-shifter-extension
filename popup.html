@@ -121,51 +121,61 @@
                     <div class="range-slider__track"></div>
                     <div class="range-slider__bar"></div>
                     <div class="range-slider__thumb"></div>
+                    <div class="range-slider__content">31</div>
                 </div>
                 <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50">
                     <div class="range-slider__track"></div>
                     <div class="range-slider__bar"></div>
                     <div class="range-slider__thumb"></div>
+                    <div class="range-slider__content">62</div>
                 </div>
                 <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50">
                     <div class="range-slider__track"></div>
                     <div class="range-slider__bar"></div>
                     <div class="range-slider__thumb"></div>
+                    <div class="range-slider__content">125</div>
                 </div>
                 <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50">
                     <div class="range-slider__track"></div>
                     <div class="range-slider__bar"></div>
                     <div class="range-slider__thumb"></div>
+                    <div class="range-slider__content">250</div>
                 </div>
                 <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50">
                     <div class="range-slider__track"></div>
                     <div class="range-slider__bar"></div>
                     <div class="range-slider__thumb"></div>
+                    <div class="range-slider__content">500</div>
                 </div>
                 <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50">
                     <div class="range-slider__track"></div>
                     <div class="range-slider__bar"></div>
                     <div class="range-slider__thumb"></div>
+                    <div class="range-slider__content">1K</div>
                 </div>
                 <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50">
                     <div class="range-slider__track"></div>
                     <div class="range-slider__bar"></div>
                     <div class="range-slider__thumb"></div>
+                    <div class="range-slider__content">2K</div>
                 </div>
                 <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50">
                     <div class="range-slider__track"></div>
                     <div class="range-slider__bar"></div>
                     <div class="range-slider__thumb"></div>
+                    <div class="range-slider__content">4K</div>
                 </div>
                 <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50">
                     <div class="range-slider__track"></div>
                     <div class="range-slider__bar"></div>
                     <div class="range-slider__thumb"></div>
+                    <div class="range-slider__content">8K</div>
                 </div>
                 <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50">
                     <div class="range-slider__track"></div>
                     <div class="range-slider__bar"></div>
                     <div class="range-slider__thumb"></div>
+                    <div class="range-slider__content">16K</div>
                 </div>
             </div>
         </div>
@@ -271,6 +281,74 @@
         <div class="row"><input type="checkbox" id="dolbyEnabled"><label>DOLBY Surround Upmix (5.1)</label></div>
     </details>
 
+    <details id="modulationPanel">
+        <summary>
+            <div class="summary-container"><span>Modulation</span>
+                <div class="reset-icon" data-section="#modulationPanel"></div>
+            </div>
+        </summary>
+        <div class="modulation-layers" style="display:flex;gap:8px;align-items:center;">
+            <select id="modulationLayer">
+                <option value="chorus">Chorus</option>
+                <option value="flanger">Flanger</option>
+                <option value="phaser">Phaser</option>
+                <option value="tremolo">Tremolo</option>
+                <option value="Vibrato">Vibrato</option>
+                <option value="rotarySpeaker">Rotary Speaker</option>
+            </select>
+            <button id="modulationLayerAddBtn" class="btn-vk link" type="button">Add Layer</button>
+        </div>
+
+        <div id="modulation-items">
+            <div class="modulation-row">
+                <div class="modulation-row__header">
+                    <span>Chorus</span>
+                    <button class="close" type="button">×</button>
+                </div>
+
+                <div class="modulation-container">
+                    <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50">
+                        <div class="range-slider__track"></div>
+                        <div class="range-slider__bar"></div>
+                        <div class="range-slider__thumb"></div>
+                        <div class="range-slider__content">Rate</div>
+                    </div>
+                    <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50">
+                        <div class="range-slider__track"></div>
+                        <div class="range-slider__bar"></div>
+                        <div class="range-slider__thumb"></div>
+                        <div class="range-slider__content">Depth</div>
+                    </div>
+                    <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50">
+                        <div class="range-slider__track"></div>
+                        <div class="range-slider__bar"></div>
+                        <div class="range-slider__thumb"></div>
+                        <div class="range-slider__content">Mix</div>
+                    </div>
+                    <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50">
+                        <div class="range-slider__track"></div>
+                        <div class="range-slider__bar"></div>
+                        <div class="range-slider__thumb"></div>
+                        <div class="range-slider__content">Delay</div>
+                    </div>
+                    <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50">
+                        <div class="range-slider__track"></div>
+                        <div class="range-slider__bar"></div>
+                        <div class="range-slider__thumb"></div>
+                        <div class="range-slider__content">Feedback</div>
+                    </div>
+                    <div class="range-slider" style="--orientation: vertical;"><input type="range" orient="vertical" min="0" max="100" value="50">
+                        <div class="range-slider__track"></div>
+                        <div class="range-slider__bar"></div>
+                        <div class="range-slider__thumb"></div>
+                        <div class="range-slider__content">Spread</div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </details>
+
     <div class="row">
         <input type="checkbox" id="optimisationDelay">
         <label>Optimization delay</label>
@@ -322,19 +400,19 @@
     </div>
 
     <div id="globalPresetModal" class="simple-modal" aria-hidden="true">
-    <div class="simple-modal__backdrop"></div>
-    <div class="simple-modal__panel">
-        <div class="simple-modal__header">
-            <div style="font-weight:600;">Presets</div>
-            <button class="close" type="button">×</button>
+        <div class="simple-modal__backdrop"></div>
+        <div class="simple-modal__panel">
+            <div class="simple-modal__header">
+                <div style="font-weight:600;">Presets</div>
+                <button class="close" type="button">×</button>
+            </div>
+            <div class="simple-modal__add" style="flex-wrap:wrap;gap:6px;">
+                <input id="globalPresetNameInput" type="text" placeholder="Preset name" spellcheck="false" style="flex:1;min-width:100px;" />
+                <button id="globalPresetAddBtn" class="btn-vk" type="button">Save Current</button>
+            </div>
+            <div id="globalPresetList" class="blacklist-list"></div>
         </div>
-        <div class="simple-modal__add" style="flex-wrap:wrap;gap:6px;">
-            <input id="globalPresetNameInput" type="text" placeholder="Preset name" spellcheck="false" style="flex:1;min-width:100px;" />
-            <button id="globalPresetAddBtn" class="btn-vk" type="button">Save Current</button>
-        </div>
-        <div id="globalPresetList" class="blacklist-list"></div>
     </div>
-</div>
 
     <script src="src/js/simple-modal.js"></script>
     <script src="popup.js"></script>

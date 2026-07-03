@@ -467,7 +467,7 @@ details>.control:last-child {
   gap: 8px;
 }
 
-.controls .select-row .row{
+.controls .select-row .row {
   margin: 0px;
 }
 
@@ -662,7 +662,7 @@ details>.control:last-child {
   transform: translate(-50%, -50%);
 }
 
-.range-slider[style*="vertical"]::after {
+.range-slider[style*="vertical"] .range-slider__content {
   position: absolute;
   bottom: 2px;
   left: 50%;
@@ -675,45 +675,6 @@ details>.control:last-child {
   text-align: center;
 }
 
-.eq-container .range-slider:nth-child(2)::after {
-  content: '31';
-}
-
-.eq-container .range-slider:nth-child(3)::after {
-  content: '62';
-}
-
-.eq-container .range-slider:nth-child(4)::after {
-  content: '125';
-}
-
-.eq-container .range-slider:nth-child(5)::after {
-  content: '250';
-}
-
-.eq-container .range-slider:nth-child(6)::after {
-  content: '500';
-}
-
-.eq-container .range-slider:nth-child(7)::after {
-  content: '1K';
-}
-
-.eq-container .range-slider:nth-child(8)::after {
-  content: '2K';
-}
-
-.eq-container .range-slider:nth-child(9)::after {
-  content: '4K';
-}
-
-.eq-container .range-slider:nth-child(10)::after {
-  content: '8K';
-}
-
-.eq-container .range-slider:nth-child(11)::after {
-  content: '16K';
-}
 
 #eqSettingsPanel .eq-presets {
   display: flex;
@@ -776,6 +737,58 @@ select {
 }
 
 /*end eq*/
+
+/*modulation*/
+.modulation-container {
+  position: relative;
+  height: 130px;
+  display: flex;
+  justify-content: space-between;
+  padding: 0 2px;
+}
+
+.modulation-row {
+  background: #3b2b53;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 0.375rem;
+  padding: 12px;
+  padding-top: 0px;
+}
+
+#modulation-items {
+  padding: 6px;
+}
+
+.modulation-row__header {
+  display: flex;
+  gap: 8px;
+  flex-direction: row;
+  padding: 10px 0;
+}
+
+.modulation-row__header span {
+  flex-grow: 1;
+  font-weight: bold;
+}
+
+.modulation-row__header {
+  align-items: center;
+  padding-bottom: 10px;
+}
+
+.modulation-row__header button.close {
+  padding: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+}
+
+/*end modulation*/
 
 .btn-vk.link {
   font-size: inherit;
