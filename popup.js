@@ -24,7 +24,8 @@ const simpleModal = globalThis['simpleModal'];
             eqSettings: false,
             spatialSettings: false,
             dynamicsSettings: false,
-            surroundSettings: false
+            surroundSettings: false,
+            modulationSettings: false,
         },
         eqGains: Array(10).fill(50),
         eqPreset: "flat",
@@ -41,8 +42,60 @@ const simpleModal = globalThis['simpleModal'];
         dolbyEnabled: !1,
         overlayEnabled: !1,
         overlayPresets: [],
-        globalPresets: {}
+        globalPresets: {},
+        modulationLayers: []
     };
+
+    // Схема описывает, какие слайдеры есть у каждого типа модуляции.
+    // Это позволит легко добавлять Ring Mod, Vowel и т.д. без изменения логики рендера.
+    const MODULATION_SCHEMAS = {
+        chorus: [
+            { id: 'rate', label: 'Rate', min: 0.1, max: 10, step: 0.1, def: 1.5 },
+            { id: 'depth', label: 'Depth', min: 0, max: 100, step: 1, def: 50 },
+            { id: 'mix', label: 'Mix', min: 0, max: 100, step: 1, def: 50 },
+            { id: 'delay', label: 'Delay', min: 0, max: 50, step: 0.5, def: 20 },
+            { id: 'feedback', label: 'Feedback', min: 0, max: 90, step: 1, def: 0 },
+            { id: 'spread', label: 'Spread', min: 0, max: 100, step: 1, def: 50 }
+        ],
+        flanger: [
+            { id: 'rate', label: 'Rate', min: 0.1, max: 10, step: 0.1, def: 0.5 },
+            { id: 'depth', label: 'Depth', min: 0, max: 100, step: 1, def: 70 },
+            { id: 'mix', label: 'Mix', min: 0, max: 100, step: 1, def: 50 },
+            { id: 'delay', label: 'Delay', min: 0, max: 10, step: 0.1, def: 2 },
+            { id: 'feedback', label: 'Feedback', min: 0, max: 90, step: 1, def: 50 }
+        ],
+        phaser: [
+            { id: 'rate', label: 'Rate', min: 0.1, max: 10, step: 0.1, def: 0.5 },
+            { id: 'depth', label: 'Depth', min: 0, max: 100, step: 1, def: 60 },
+            { id: 'mix', label: 'Mix', min: 0, max: 100, step: 1, def: 50 },
+            { id: 'feedback', label: 'Feedback', min: 0, max: 90, step: 1, def: 40 },
+            { id: 'stages', label: 'Stages', min: 1, max: 12, step: 1, def: 4 }
+        ],
+        tremolo: [
+            { id: 'rate', label: 'Rate', min: 0.1, max: 20, step: 0.1, def: 5 },
+            { id: 'depth', label: 'Depth', min: 0, max: 100, step: 1, def: 50 },
+            { id: 'shape', label: 'Shape', min: 0, max: 2, step: 1, def: 0 } // 0: Sine, 1: Square, 2: Sawtooth
+        ],
+        Vibrato: [
+            { id: 'rate', label: 'Rate', min: 0.1, max: 10, step: 0.1, def: 5 },
+            { id: 'depth', label: 'Depth', min: 0, max: 100, step: 1, def: 50 }
+        ],
+        rotarySpeaker: [
+            { id: 'rate', label: 'Rate', min: 0.1, max: 8, step: 0.1, def: 1 },
+            { id: 'depth', label: 'Depth', min: 0, max: 100, step: 1, def: 70 },
+            { id: 'mix', label: 'Mix', min: 0, max: 100, step: 1, def: 100 }
+        ],
+        ringModulator: [
+            { id: 'frequency', label: 'Freq', min: 20, max: 5000, step: 1, def: 440 },
+            { id: 'mix', label: 'Mix', min: 0, max: 100, step: 1, def: 50 }
+        ],
+        vowelFilter: [
+            { id: 'rate', label: 'Rate', min: 0.1, max: 5, step: 0.1, def: 2 },
+            { id: 'mix', label: 'Mix', min: 0, max: 100, step: 1, def: 50 },
+            { id: 'vowel', label: 'Vowel', min: 0, max: 4, step: 1, def: 0 } // 0:A, 1:E, 2:I, 3:O, 4:U
+        ]
+    };
+
 
     const SECTION_DEFAULTS = {
         '#volumeBoostPanel': { volumeBoostDb: DEFAULT_SETTINGS.volumeBoostDb },
@@ -76,7 +129,8 @@ const simpleModal = globalThis['simpleModal'];
         },
         "#surroundPanel": {
             dolbyEnabled: false
-        }
+        },
+        "#modulationPanel": { modulationLayers: [] }
     };
 
     const BUILT_IN_EQ_PRESETS = {
@@ -133,6 +187,7 @@ const simpleModal = globalThis['simpleModal'];
         channelBalanceVal = document.getElementById("channelBalanceVal");
     const dynamicsPanel = document.getElementById("dynamicsPanel"),
         surroundPanel = document.getElementById("surroundPanel"),
+        modulationPanel = document.getElementById("modulationPanel"),
 
         compressorThresholdSlider = document.getElementById("compressorThreshold"),
         compressorThresholdVal = document.getElementById("compressorThresholdVal"),
@@ -164,7 +219,8 @@ const simpleModal = globalThis['simpleModal'];
             blacklistPatterns: saved.blacklistPatterns || defaultSettings.blacklistPatterns,
             eqPresets: saved.eqPresets || {},
             globalPresets: saved.globalPresets || {},
-            overlayPresets: saved.overlayPresets || []
+            overlayPresets: saved.overlayPresets || [],
+            modulationLayers: saved.modulationLayers || defaultSettings.modulationLayers
         }
     }();
 
@@ -181,35 +237,21 @@ const simpleModal = globalThis['simpleModal'];
     let applyTimeout = null;
 
     function syncUIToActivePresets() {
-        // 1. Проверяем, стали ли настройки полностью дефолтными (для обоих режимов)
-        let isDefault = true;
+        let isDefault = !0;
+        const excludeKeys = ["blacklistPatterns", "toggleState", "eqPresets", "globalPresets", "overlayPresets", "overlayEnabled", "optimisationDelay", "modulationLayers"];
+
         for (const key in DEFAULT_SETTINGS) {
-            if (["blacklistPatterns", "toggleState", "eqPresets", "globalPresets", "overlayPresets", "overlayEnabled", "optimisationDelay"].includes(key)) continue;
-            if (JSON.stringify(DEFAULT_SETTINGS[key]) !== JSON.stringify(currentSettings[key])) { isDefault = false; break; }
-        }
-
-        if (isDefault) {
-            if (currentSettings.globalPreset === "custom") {
-                currentSettings.globalPreset = "default";
-                delete currentSettings.globalPresets?.custom;
-                globalPresetSelect.value = "default";
-                updateGlobalPresetSelectUI();
+            if (!excludeKeys.includes(key) && JSON.stringify(DEFAULT_SETTINGS[key]) !== JSON.stringify(currentSettings[key])) {
+                isDefault = !1;
+                break;
             }
-            if (isOverlayActive() && currentSettings.overlayPresets?.includes("custom")) {
-                currentSettings.overlayPresets = currentSettings.overlayPresets.filter(id => id !== "custom");
-                delete currentSettings.globalPresets?.custom; // Удаляем за собой невидимый пресет из памяти
-                updateGlobalPresetSelectUI();
-            }
-            return;
         }
 
-        // 2. Если есть отличия от дефолта — создаем/обновляем пресет Custom
-        if (!currentSettings.globalPresets) currentSettings.globalPresets = {};
-        if (!currentSettings.globalPresets["custom"]) {
-            currentSettings.globalPresets["custom"] = { name: "Custom", values: {} };
-        }
+        if (isDefault) return "custom" === currentSettings.globalPreset && (currentSettings.globalPreset = "default", delete currentSettings.globalPresets?.custom, globalPresetSelect.value = "default", updateGlobalPresetSelectUI()), void (isOverlayActive() && currentSettings.overlayPresets?.includes("custom") && (currentSettings.overlayPresets = currentSettings.overlayPresets.filter(id => "custom" !== id), delete currentSettings.globalPresets?.custom, updateGlobalPresetSelectUI()));
 
-        const pValues = currentSettings.globalPresets["custom"].values;
+        currentSettings.globalPresets || (currentSettings.globalPresets = {}), currentSettings.globalPresets.custom || (currentSettings.globalPresets.custom = { name: "Custom", values: {} });
+        const pValues = currentSettings.globalPresets.custom.values;
+
         pValues.pitchValueSemitones = currentSettings.pitchValueSemitones;
         pValues.pitchValueCents = currentSettings.pitchValueCents;
         pValues.windowSizeMilliseconds = currentSettings.windowSizeMilliseconds;
@@ -220,21 +262,9 @@ const simpleModal = globalThis['simpleModal'];
         pValues.reverbWet = currentSettings.reverbWet;
         pValues.stereoWiden = currentSettings.stereoWiden;
         pValues.channelBalance = currentSettings.channelBalance;
+        pValues.modulationLayers = JSON.parse(JSON.stringify(currentSettings.modulationLayers || [])); // <--- НОВОЕ ПОЛЕ
 
-        // 3. Обновляем интерфейс в зависимости от режима
-        if (isOverlayActive()) {
-            // Добавляем Custom в список ТОЛЬКО если юзер его ранее не снимал вручную
-            if (!userDisabledCustomInOverlay && !currentSettings.overlayPresets.includes("custom")) {
-                currentSettings.overlayPresets.push("custom");
-                updateGlobalPresetSelectUI();
-            }
-        } else {
-            if (currentSettings.globalPreset === "default") {
-                currentSettings.globalPreset = "custom";
-                globalPresetSelect.value = "custom";
-                updateGlobalPresetSelectUI();
-            }
-        }
+        isOverlayActive() ? userDisabledCustomInOverlay || currentSettings.overlayPresets.includes("custom") || (currentSettings.overlayPresets.push("custom"), updateGlobalPresetSelectUI()) : "default" === currentSettings.globalPreset && (currentSettings.globalPreset = "custom", globalPresetSelect.value = "custom", updateGlobalPresetSelectUI())
     }
 
     async function scheduleApply() {
@@ -315,6 +345,84 @@ const simpleModal = globalThis['simpleModal'];
             s.querySelectorAll('input, select, button').forEach(el => el.disabled = disabled);
             if (disabled) s.classList.add('disabled-section'); else s.classList.remove('disabled-section');
         });
+    }
+
+    // Функция рендеринга слоев модуляции
+    function renderModulationLayers() {
+        console.log('[WS Debug] renderModulationLayers отработал'); // Смотри в консоль при перетаскивании. Если этого текста нет - функция НЕ вызывается.
+        const container = document.getElementById('modulation-items');
+        container.innerHTML = '';
+
+        if (!Array.isArray(currentSettings.modulationLayers)) {
+            currentSettings.modulationLayers = [];
+            return;
+        }
+
+        currentSettings.modulationLayers.forEach((layer, layerIndex) => {
+            const schema = MODULATION_SCHEMAS[layer.type];
+            if (!schema) return;
+
+            const row = document.createElement('div');
+            row.className = 'modulation-row';
+            row.dataset.id = layer.id;
+
+            const header = document.createElement('div');
+            header.className = 'modulation-row__header';
+
+            const title = document.createElement('span');
+            title.textContent = layer.type.charAt(0).toUpperCase() + layer.type.slice(1);
+
+            const closeBtn = document.createElement('button');
+            closeBtn.className = 'close';
+            closeBtn.type = 'button';
+            closeBtn.textContent = '×';
+
+            header.appendChild(title);
+            header.appendChild(closeBtn);
+
+            const slidersContainer = document.createElement('div');
+            slidersContainer.className = 'modulation-container';
+            // КРИТИЧЕСКИ ВАЖНО: Принудительно задаем геометрию для вертикальных слайдеров
+            slidersContainer.style.display = 'flex';
+            slidersContainer.style.alignItems = 'center';
+            slidersContainer.style.height = '150px'; // Если слишком высоко/низко, поменяй эту цифру
+            slidersContainer.style.gap = '8px';
+
+            schema.forEach(param => {
+                const currentVal = layer.params[param.id] !== undefined ? layer.params[param.id] : param.def;
+
+                const sliderWrapper = document.createElement('div');
+                sliderWrapper.className = 'range-slider';
+                sliderWrapper.style.setProperty('--orientation', 'vertical');
+                sliderWrapper.style.height = '100%'; // Растягиваем обертку на всю высоту контейнера
+
+                const input = document.createElement('input');
+                input.type = 'range';
+                input.setAttribute('orient', 'vertical');
+                input.min = param.min;
+                input.max = param.max;
+                input.step = param.step;
+                input.value = currentVal;
+                input.dataset.layerId = layer.id;
+                input.dataset.paramId = param.id;
+
+                sliderWrapper.appendChild(input);
+                sliderWrapper.insertAdjacentHTML('beforeend', '<div class="range-slider__track"></div><div class="range-slider__bar"></div><div class="range-slider__thumb"></div>');
+
+                const label = document.createElement('div');
+                label.className = 'range-slider__content';
+                label.textContent = param.label;
+                sliderWrapper.appendChild(label);
+
+                slidersContainer.appendChild(sliderWrapper);
+            });
+
+            row.appendChild(header);
+            row.appendChild(slidersContainer);
+            container.appendChild(row);
+        });
+
+        container.querySelectorAll('.range-slider input').forEach(syncVisualSlider);
     }
 
     function updateGlobalPresetSelectUI() {
@@ -422,6 +530,73 @@ const simpleModal = globalThis['simpleModal'];
         }
     })
 
+    // Обработчик добавления слоя модуляции
+    document.getElementById('modulationLayerAddBtn').addEventListener('click', () => {
+        const select = document.getElementById('modulationLayer');
+        const type = select.value;
+        if (!type || !MODULATION_SCHEMAS[type]) return;
+
+        if (!Array.isArray(currentSettings.modulationLayers)) {
+            currentSettings.modulationLayers = [];
+        }
+
+        // Проверяем, нет ли уже такого типа модуляции (запрещаем дубликаты)
+        if (currentSettings.modulationLayers.some(l => l.type === type)) {
+            return;
+        }
+
+        // Генерируем уникальный ID для слоя
+        const newLayer = {
+            id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
+            type: type,
+            params: {}
+        };
+
+        // Заполняем параметры дефолтными значениями из схемы
+        MODULATION_SCHEMAS[type].forEach(p => {
+            newLayer.params[p.id] = p.def;
+        });
+
+        currentSettings.modulationLayers.push(newLayer);
+        renderModulationLayers();
+        updateSectionResetIcons();
+        switchToCustomIfNeeded();
+        scheduleApply();
+    });
+
+    // Делегированный обработчик кликов внутри контейнера модуляций (удаление слоев)
+    document.getElementById('modulation-items').addEventListener('click', (e) => {
+        if (e.target.closest('.close')) {
+            const row = e.target.closest('.modulation-row');
+            if (!row) return;
+            const layerId = row.dataset.id;
+
+            currentSettings.modulationLayers = (currentSettings.modulationLayers || []).filter(l => l.id !== layerId);
+            renderModulationLayers();
+            updateSectionResetIcons();
+            switchToCustomIfNeeded();
+            scheduleApply();
+        }
+    });
+
+    // Делегированный обработчик изменения слайдеров модуляции
+    document.getElementById('modulation-items').addEventListener('input', (e) => {
+        if (e.target.matches('input[type=range]')) {
+            const layerId = e.target.dataset.layerId;
+            const paramId = e.target.dataset.paramId;
+            const val = parseFloat(e.target.value);
+
+            const layer = (currentSettings.modulationLayers || []).find(l => l.id === layerId);
+            if (layer && layer.params && paramId) {
+                layer.params[paramId] = val;
+                syncVisualSlider(e.target);
+                updateSectionResetIcons();
+                switchToCustomIfNeeded();
+                scheduleApply();
+            }
+        }
+    });
+
     function updateEqPresetSelectUI() {
         const select = eqPresetSelect, all = getAllEqPresets();
         select.innerHTML = "";
@@ -483,6 +658,7 @@ const simpleModal = globalThis['simpleModal'];
 
             dynamicsPanel.open = currentSettings.toggleState?.dynamicsSettings ?? !1,
             surroundPanel.open = currentSettings.toggleState?.surroundSettings ?? !1,
+            modulationPanel.open = currentSettings.toggleState?.modulationSettings ?? !1,
 
             compressorThresholdSlider.value = currentSettings.compressorThreshold,
             compressorThresholdVal.textContent = currentSettings.compressorThreshold + " dB",
@@ -513,9 +689,7 @@ const simpleModal = globalThis['simpleModal'];
         });
 
         document.querySelectorAll(".range-slider input").forEach(syncVisualSlider);
-        updateEqualizerGraph();
-        updateEqPresetSelectUI();
-        updateSectionResetIcons();
+        updateEqualizerGraph(), updateEqPresetSelectUI(), updateSectionResetIcons(), renderModulationLayers();
     }
 
     function formatDb(val) { return val > 0 ? `+${val} dB` : `${val} dB`; }
@@ -585,7 +759,8 @@ const simpleModal = globalThis['simpleModal'];
             eqSettings: eqSettingsPanel.open,
             spatialSettings: spatialSettingsPanel.open,
             dynamicsSettings: dynamicsPanel.open,
-            surroundSettings: surroundPanel.open
+            surroundSettings: surroundPanel.open,
+            modulationSettings: modulationPanel.open
         };
         await chrome.storage.local.set({ pitchSettings: currentSettings });
     }
@@ -927,7 +1102,7 @@ const simpleModal = globalThis['simpleModal'];
         }
     });
 
-    [volumeBoostPanel, pitchSettingsPanel, speedSettingsPanel, eqSettingsPanel, spatialSettingsPanel, dynamicsPanel, surroundPanel].forEach(p => p.addEventListener("toggle", saveToggleState));
+    [volumeBoostPanel, pitchSettingsPanel, speedSettingsPanel, eqSettingsPanel, spatialSettingsPanel, dynamicsPanel, surroundPanel, modulationPanel].forEach(p => p.addEventListener("toggle", saveToggleState));
 
-    updateUI(), renderBlacklistList(), renderEqPresetList(), renderGlobalPresetList(), updateGlobalPresetSelectUI(), await refreshSiteStatus()
+    updateUI(), renderBlacklistList(), renderEqPresetList(), renderGlobalPresetList(), updateGlobalPresetSelectUI(), renderModulationLayers(), await refreshSiteStatus()
 })();

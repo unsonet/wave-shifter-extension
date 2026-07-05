@@ -289,7 +289,7 @@ input[type=radio] {
 
 .simple-modal__header {
   display: flex;
-  justify-content: space-between;
+  justify-content: space-around;
   align-items: center;
 }
 
@@ -756,7 +756,10 @@ select {
 }
 
 #modulation-items {
-  padding: 6px;
+  flex-direction: column;
+    display: flex;
+    gap: 6px;
+    padding: 6px;
 }
 
 .modulation-row__header {
