@@ -565,8 +565,8 @@ details>.control:last-child {
 .range-slider input[type="range"][orient="vertical"] {
   writing-mode: vertical-lr;
   direction: rtl;
-  height: 100% !important;
-  width: 100% !important;
+  height: 100%;
+  width: 100%;
 }
 
 .range-slider__track {
@@ -634,41 +634,69 @@ details>.control:last-child {
 }
 
 .range-slider[style*="vertical"] {
+  --rs-legend-bottom-size: 0px;
+  --rs-legend-top-size: 0px;
   width: 26px;
   height: 100%;
   position: relative;
 }
+.range-slider[style*="vertical"].legend-bottom{
+  --rs-legend-bottom-size: 20px;
+}
+.range-slider[style*="vertical"].legend-top{
+  --rs-legend-top-size: 20px;
+}
+
+.range-slider[style*="vertical"] input[type="range"][orient="vertical"]{
+  height: calc(100% - var(--rs-legend-bottom-size) - var(--rs-legend-top-size));
+}
+.range-slider[style*="vertical"].legend-top input[type="range"][orient="vertical"]{
+  top: var(--rs-legend-top-size);
+}
 
 .range-slider[style*="vertical"] .range-slider__track {
   left: 50%;
-  top: 0;
-  bottom: 20px;
+  top: var(--rs-legend-top-size);
+  bottom: var(--rs-legend-bottom-size);
   width: var(--rs-track-thickness);
   transform: translateX(-50%);
 }
 
 .range-slider[style*="vertical"] .range-slider__bar {
   left: 50%;
-  bottom: 20px;
+  bottom: var(--rs-legend-bottom-size);
   width: var(--rs-track-thickness);
   /* Умножаем доступную высоту (100% минус 20px) на число от 0 до 1 */
-  height: calc(var(--pct) * (100% - 20px));
+  height: calc(var(--pct) * (100% - var(--rs-legend-bottom-size) - var(--rs-legend-top-size) ));
   transform: translateX(-50%);
 }
 
 .range-slider[style*="vertical"] .range-slider__thumb {
-  left: 50%;
-  top: calc((100% - 20px) * (1 - var(--pct)));
-  transform: translate(-50%, -50%);
+    left: 50%;
+    top: calc(var(--rs-legend-top-size) + (100% - var(--rs-legend-top-size) - var(--rs-legend-bottom-size)) * (1 - var(--pct)));
+    transform: translate(-50%, -50%);
 }
 
-.range-slider[style*="vertical"] .range-slider__content {
+.range-slider[style*="vertical"] .range-slider__legend-bottom {
   position: absolute;
   bottom: 2px;
   left: 50%;
   transform: translateX(-50%);
   font-size: 9px;
   color: #aaa;
+  user-select: none;
+  pointer-events: none;
+  width: 4em;
+  text-align: center;
+}
+
+.range-slider[style*="vertical"] .range-slider__legend-top {
+  position: absolute;
+  top: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 9px;
+  color: #fff;
   user-select: none;
   pointer-events: none;
   width: 4em;
@@ -712,15 +740,23 @@ select {
 }
 
 .eq-svg {
+  --rs-legend-bottom-size: 0px;
+  --rs-legend-top-size: 0px;
   position: absolute;
   top: 0;
   left: 0;
   width: 100%;
-  height: calc(100% - 20px);
+  height: calc(100% - var(--rs-legend-bottom-size) - var(--rs-legend-top-size));
   z-index: 0;
   pointer-events: none;
   overflow: visible;
   fill: none;
+}
+.eq-svg.legend-bottom{
+  --rs-legend-bottom-size: 20px;
+}
+.eq-svg.legend-top{
+  --rs-legend-top-size: 20px;
 }
 
 .eq-svg-line {

@@ -24,31 +24,48 @@
         const initMeta = document.getElementById("__pitchShifterCfg");
         if (initMeta && initMeta.dataset.initialSettings) {
             const initData = JSON.parse(initMeta.dataset.initialSettings);
-            if (initData.overlayEnabled && Array.isArray(initData.overlayPresets) && initData.overlayPresets.length > 0) {
-                const defaultPresetValues = { ...initData };
-                delete defaultPresetValues.blacklistPatterns; delete defaultPresetValues.toggleState;
-                delete defaultPresetValues.eqPresets; delete defaultPresetValues.globalPresets;
-                delete defaultPresetValues.overlayPresets; delete defaultPresetValues.overlayEnabled;
-                delete defaultPresetValues.optimisationDelay;
 
-                const allPresets = { default: { values: defaultPresetValues }, ...(initData.globalPresets || {}) };
-                const uniqueIds = [...new Set(initData.overlayPresets)];
-                const rawPresets = uniqueIds.map(id => {
+            if (
+                initData.overlayEnabled &&
+                Array.isArray(initData.overlayPresets) &&
+                initData.overlayPresets.length > 0
+            ) {
+                // Чистый базовый пресет (только те настройки, которые использует аудио-граф оверлея)
+                const defaultPresetValues = {
+                    pitchValueSemitones: 0,
+                    pitchValueCents: 0,
+                    windowSizeMilliseconds: 120,
+                    applySmartProcessing: true,
+                    volumeBoostDb: 0,
+                    eqGains: Array(10).fill(50),
+                    reverbType: null,
+                    reverbWet: 0,
+                    stereoWiden: 0,
+                    channelBalance: 0,
+                    modulationLayers: []
+                };
+
+                const allPresets = {
+                    default: { values: defaultPresetValues },
+                    ...(initData.globalPresets || {})
+                };
+
+                const rawPresets = [...new Set(initData.overlayPresets)].map(id => {
                     const pValues = allPresets[id]?.values || {};
-                    return { id, values: { ...defaultPresetValues, ...pValues } };
+                    return {
+                        id: id,
+                        values: { ...defaultPresetValues, ...pValues }
+                    };
                 });
-                const seen = new Set();
-                const unique = rawPresets.filter(p => {
-                    const cleanValues = { ...p.values };
-                    delete cleanValues.blacklistPatterns; delete cleanValues.toggleState;
-                    delete cleanValues.eqPresets; delete cleanValues.globalPresets;
-                    delete cleanValues.overlayPresets; delete cleanValues.overlayEnabled;
-                    delete cleanValues.optimisationDelay;
 
-                    const hash = JSON.stringify(cleanValues);
+                const seen = new Set;
+                const unique = rawPresets.filter(p => {
+                    const hash = JSON.stringify(p.values);
                     if (seen.has(hash)) return false;
-                    seen.add(hash); return true;
+                    seen.add(hash);
+                    return true;
                 });
+
                 if (unique.length > 0) {
                     overlayMode = true;
                     overlayPresetsData = unique.slice(0, 10);
@@ -214,7 +231,15 @@
                         sourceGain.connect(chainEqs[0]);
                     }
 
-                    parallelChains.push({ pitchNode, eqs: chainEqs, procType, correlatorNodes, subL: chainSubL, subR: chainSubR, convolver: chainConvolver, dry: chainDry, wet: chainWet, balance: chainBalance, gain: chainGain, settings: pSet });
+                    parallelChains.push({
+                        pitchNode, eqs: chainEqs, procType, correlatorNodes, subL: chainSubL,
+                        subR: chainSubR, convolver: chainConvolver, dry: chainDry, wet: chainWet, balance: chainBalance,
+                        gain: chainGain, settings: pSet,
+                        // Кэш для предотвращения микро-прерываний (как в стандартном режиме)
+                        lastBlockMs: null,
+                        lastSmart: null
+                    });
+
                 } catch (chainError) {
                     console.error(`[WS] Critical error building chain ${i}, skipping it:`, chainError);
                 }
@@ -235,10 +260,20 @@
         const globalRate = calcPlaybackRate();
         parallelChains.forEach(chain => {
             const pSet = chain.settings;
-            if (chain.pitchNode && chain.procType === "signalsmith") {
-                chain.pitchNode.port.postMessage([null, "configure", { blockMs: pSet.windowSizeMilliseconds, splitComputation: !pSet.applySmartProcessing }]);
+
+            if (chain.pitchNode && "signalsmith" === chain.procType) {
+                // Отправляем configure ТОЛЬКО если действительно изменился размер блока или смарт-обработка.
+                // Иначе Signalsmith сбрасывает буферы, вызывая микро-прерывания звука.
+                const newBlock = pSet.windowSizeMilliseconds;
+                const newSmart = !pSet.applySmartProcessing;
+                if (chain.lastBlockMs !== newBlock || chain.lastSmart !== newSmart) {
+                    chain.pitchNode.port.postMessage([null, "configure", { blockMs: newBlock, splitComputation: newSmart }]);
+                    chain.lastBlockMs = newBlock;
+                    chain.lastSmart = newSmart;
+                }
+
                 const finalSemitones = pSet.pitchValueSemitones + pSet.pitchValueCents / 100 + (!usingHowler || !settings.preservePitch || globalRate <= 0 ? 0 : -12 * Math.log2(globalRate));
-                chain.pitchNode.port.postMessage([null, "start", { active: true, semitones: finalSemitones, tonalityHz: 8800 }]);
+                chain.pitchNode.port.postMessage([null, "start", { active: !0, semitones: finalSemitones, tonalityHz: 8800 }])
             } else if (chain.procType === "correlator" && chain.correlatorNodes) {
                 const finalSemitones = pSet.pitchValueSemitones + pSet.pitchValueCents / 100 + (!usingHowler || !settings.preservePitch || globalRate <= 0 ? 0 : -12 * Math.log2(globalRate));
                 const factor = Math.pow(2, finalSemitones / 12), windowSec = pSet.windowSizeMilliseconds / 1000;
@@ -264,6 +299,39 @@
                 chain.convolver.buffer = null;
             }
             chain.balance.pan.value = (pSet.channelBalance || 0) / 100;
+
+            // --- Переключение модуляции ВНУТРИ цепи ---
+            if (chain.modNodes) {
+                chain.modNodes.forEach(function (n) {
+                    try { n.input.disconnect(); } catch (e) { }
+                    try { n.output.disconnect(); } catch (e) { }
+                    if (n.oscillators) n.oscillators.forEach(function (osc) { try { osc.stop(); } catch (e) { } });
+                });
+            }
+            chain.modNodes = [];
+
+            try { chain.balance.disconnect(chain.gain); } catch (e) { }
+
+            var cLayers = pSet.modulationLayers;
+            if (cLayers && cLayers.length > 0) {
+                var cCurr = audioCtx.createGain();
+                chain.balance.connect(cCurr);
+
+                for (var mi = 0; mi < cLayers.length; mi++) {
+                    var mL = cLayers[mi];
+                    if (!mL || !mL.type) continue;
+                    var mEff;
+                    try { mEff = createModulationEffect(audioCtx, mL.type, mL.params || {}); }
+                    catch (err) { console.error("[WS Overlay Mod]", err); continue; }
+
+                    cCurr.connect(mEff.input);
+                    cCurr = mEff.output;
+                    chain.modNodes.push(mEff);
+                }
+                cCurr.connect(chain.gain);
+            } else {
+                chain.balance.connect(chain.gain);
+            }
         });
         if (globalCompressorNode) { globalCompressorNode.threshold.value = settings.compressorThreshold || 0; globalCompressorNode.knee.value = settings.compressorKnee || 30; globalCompressorNode.ratio.value = settings.compressorRatio || 1; globalCompressorNode.attack.value = (settings.compressorAttack || 3) / 1000; globalCompressorNode.release.value = (settings.compressorRelease || 250) / 1000; }
         if (globalDolbyInputNode) {
@@ -271,6 +339,7 @@
             if (settings.dolbyEnabled) { defaultChannelCount = audioCtx.destination.channelCount; audioCtx.destination.channelCount = 6; globalStereoPannerNode.connect(globalDolbyInputNode); globalDolbyOutputNode.connect(globalLimiterNode); }
             else { audioCtx.destination.channelCount = defaultChannelCount || 2; globalStereoPannerNode.connect(globalLimiterNode); }
         }
+        refreshModulationGraph();
     }
 
     // --- END OVERLAY ARCHITECTURE ---
@@ -319,7 +388,7 @@
 
     let howlerProbeTimer = null, usingHowler = false, howlerAttached = false, siteIsBlacklisted = false;
     const connectedMediaElements = new Set, connectingMediaElements = new WeakSet;
-    let stereoSplitter, stereoMerger, subLeftGain, subRightGain, convolverNode, dryGainNode, wetGainNode, reverbMergeNode, stereoPannerNode, compressorNode, dolbyInputNode, dolbyOutputNode, surroundSplitter, surroundMerger, surroundCenterGain;
+    let stereoSplitter, stereoMerger, subLeftGain, subRightGain, convolverNode, dryGainNode, wetGainNode, reverbMergeNode, stereoPannerNode, compressorNode, dolbyInputNode, dolbyOutputNode, surroundSplitter, surroundMerger, surroundCenterGain, modulationInputNode = null, modulationOutputNode = null, modulationLayersNodes = [];
     const convolverCache = new Map;
     let lastConfiguredBlockMs = null, lastConfiguredSmart = null, pitchUpdateRafId = null;
 
@@ -501,13 +570,23 @@
             return;
         }
         if (audioCtx && audioCtx !== ctx) {
-            try { pitchNode?.disconnect() } catch { }
-            try { gainNode?.disconnect() } catch { }
-            try { limiterNode?.disconnect() } catch { }
-            try { pitchNode?.port?.close?.() } catch { }
-            eqFilters.forEach(f => { try { f.disconnect() } catch { } });
-            pitchNode = null; eqFilters = []; gainNode = null; limiterNode = null; isNodeReady = false; sourceGain = null;
-            lastConfiguredBlockMs = null; lastConfiguredSmart = null;
+            try {
+                pitchNode?.disconnect()
+            } catch { }
+            try {
+                gainNode?.disconnect()
+            } catch { }
+            try {
+                limiterNode?.disconnect()
+            } catch { }
+            try {
+                pitchNode?.port?.close?.()
+            } catch { }
+            eqFilters.forEach(f => {
+                try {
+                    f.disconnect()
+                } catch { }
+            }), pitchNode = null, eqFilters = [], gainNode = null, limiterNode = null, isNodeReady = !1, sourceGain = null, lastConfiguredBlockMs = null, lastConfiguredSmart = null, modulationInputNode = null, modulationOutputNode = null, modulationLayersNodes = []
         }
 
         audioCtx = ctx;
@@ -752,6 +831,137 @@
         compressorNode.release.value = (settings.compressorRelease || 250) / 1e3
     }
 
+    function createModulationEffect(ctx, type, params) {
+        var input = ctx.createGain();
+        var output = ctx.createGain();
+        var oscillators = [];
+
+        if (type === "tremolo") {
+            var depth = (params.depth || 50) / 100;
+            var radius = params.rate || 5;
+            var shape = params.shape || 0;
+            var waveTypes = ["sine", "triangle", "square"];
+
+            var tremoloGain = ctx.createGain();
+            tremoloGain.gain.value = 1.0;
+
+            var lfo = ctx.createOscillator();
+            lfo.type = waveTypes[shape] || "sine";
+            lfo.frequency.value = radius;
+
+            var lfoDepth = ctx.createGain();
+            lfoDepth.gain.value = depth / 2;
+
+            lfo.connect(lfoDepth);
+            lfoDepth.connect(tremoloGain.gain);
+            input.connect(tremoloGain);
+            tremoloGain.connect(output);
+
+            try {
+                lfo.start();
+            } catch (e) {
+                console.log("[WS] Context suspended, modulation activates on interaction");
+            }
+            oscillators.push(lfo);
+        } else {
+            input.connect(output);
+        }
+
+        return {
+            input: input,
+            output: output,
+            oscillators: oscillators
+        };
+    }
+
+    function refreshModulationGraph() {
+        if (!audioCtx) return;
+
+        // В режиме overlay модуляция обрабатывается внутри каждой цепи (в refreshOverlayNodes)
+        if (overlayMode) {
+            var srcOv = globalStereoPannerNode;
+            var dstOv = globalLimiterNode;
+            if (!srcOv || !dstOv) return;
+
+            // Очищаем глобальные модуляционные ноды, если они остались
+            for (var ci = 0; ci < modulationLayersNodes.length; ci++) {
+                var cn = modulationLayersNodes[ci];
+                try { cn.input.disconnect(); } catch (e) { }
+                try { cn.output.disconnect(); } catch (e) { }
+                for (var cj = 0; cj < cn.oscillators.length; cj++) { try { cn.oscillators[cj].stop(); } catch (e) { } }
+            }
+            modulationLayersNodes = [];
+            try { modulationInputNode.disconnect(); } catch (e) { }
+            try { modulationOutputNode.disconnect(); } catch (e) { }
+
+            // Просто пропускаем сигнал мимо глобальной модуляции
+            try { srcOv.disconnect(dstOv); } catch (e) { }
+            try { srcOv.disconnect(modulationInputNode); } catch (e) { }
+            srcOv.connect(dstOv);
+            return;
+        }
+
+        var src = overlayMode ? globalStereoPannerNode : stereoPannerNode;
+        var dst = overlayMode ? globalLimiterNode : limiterNode;
+        if (!src || !dst) return;
+
+        if (!modulationInputNode || modulationInputNode.context !== audioCtx) {
+            modulationInputNode = audioCtx.createGain();
+            modulationOutputNode = audioCtx.createGain();
+        }
+
+        // --- очистка старых эффектов ---
+        for (var i = 0; i < modulationLayersNodes.length; i++) {
+            var n = modulationLayersNodes[i];
+            try { n.input.disconnect(); } catch (e) { }
+            try { n.output.disconnect(); } catch (e) { }
+            for (var j = 0; j < n.oscillators.length; j++) {
+                try { n.oscillators[j].stop(); } catch (e) { }
+            }
+        }
+        modulationLayersNodes = [];
+
+        // --- отключаем I/O ноды от всего ---
+        try { modulationInputNode.disconnect(); } catch (e) { }
+        try { modulationOutputNode.disconnect(); } catch (e) { }
+
+        // --- читаем слои ---
+        var layers = settings.modulationLayers;
+
+        if (!layers || !layers.length) {
+            // НЕТ модуляции — прямое соединение, обязательно отключаем модуляционный вход
+            try { src.disconnect(dst); } catch (e) { }
+            try { src.disconnect(modulationInputNode); } catch (e) { }
+            src.connect(dst);
+            return;
+        }
+
+        // --- строим цепь ---
+        var current = modulationInputNode;
+        for (var k = 0; k < layers.length; k++) {
+            var layer = layers[k];
+            if (!layer || !layer.type) continue;
+            var effect;
+            try {
+                effect = createModulationEffect(audioCtx, layer.type, layer.params || {});
+            } catch (err) {
+                console.error("[WS Modulation] createModulationEffect error:", layer.type, err);
+                continue;
+            }
+            current.connect(effect.input);
+            current = effect.output;
+            modulationLayersNodes.push(effect);
+        }
+
+        // --- подключаем: src → цепь модуляции → dst ---
+        try { src.disconnect(dst); } catch (e) { }
+        try { src.disconnect(modulationInputNode); } catch (e) { }
+        src.connect(modulationInputNode);
+        current.connect(modulationOutputNode);
+        modulationOutputNode.connect(dst);
+
+        console.log("[WS Modulation] Chain active:", layers.map(function (l) { return l.type; }).join(" → "));
+    }
 
     function refreshDolby() {
         if (!dolbyInputNode || !surroundSplitter) return;
@@ -782,6 +992,7 @@
         refreshChannelBalance();
         refreshCompressor();
         refreshDolby();
+        refreshModulationGraph();
     }
 
     function applySpeedSettings(mediaEl) {
@@ -1111,8 +1322,19 @@
                         try { chain.pitchNode?.disconnect(); } catch (e) { }
                         chain.eqs.forEach(f => { try { f.disconnect(); } catch (e) { } });
                         try { chain.gain?.disconnect(); } catch (e) { }
+
                         if (chain.correlatorNodes?.oscillators) {
                             chain.correlatorNodes.oscillators.forEach(osc => { try { osc.stop(); } catch (e) { } });
+
+                            if (chain.modNodes) {
+                                chain.modNodes.forEach(n => {
+                                    if (n.oscillators) n.oscillators.forEach(osc => {
+                                        try {
+                                            osc.stop()
+                                        } catch (e) { }
+                                    })
+                                })
+                            }
                         }
                     });
                     parallelChains = [];
