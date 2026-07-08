@@ -262,14 +262,18 @@
             const pSet = chain.settings;
 
             if (chain.pitchNode && "signalsmith" === chain.procType) {
-                // Отправляем configure ТОЛЬКО если действительно изменился размер блока или смарт-обработка.
-                // Иначе Signalsmith сбрасывает буферы, вызывая микро-прерывания звука.
-                const newBlock = pSet.windowSizeMilliseconds;
-                const newSmart = !pSet.applySmartProcessing;
-                if (chain.lastBlockMs !== newBlock || chain.lastSmart !== newSmart) {
-                    chain.pitchNode.port.postMessage([null, "configure", { blockMs: newBlock, splitComputation: newSmart }]);
-                    chain.lastBlockMs = newBlock;
-                    chain.lastSmart = newSmart;
+                // Привязываем умное кэширование к настройке "Optimization delay"
+                if (settings.optimisationDelay) {
+                    const newBlock = pSet.windowSizeMilliseconds;
+                    const newSmart = !pSet.applySmartProcessing;
+                    if (chain.lastBlockMs !== newBlock || chain.lastSmart !== newSmart) {
+                        chain.pitchNode.port.postMessage([null, "configure", { blockMs: newBlock, splitComputation: newSmart }]);
+                        chain.lastBlockMs = newBlock;
+                        chain.lastSmart = newSmart;
+                    }
+                } else {
+                    // Если оптимизация отключена, отправляем configure каждый раз (старое поведение)
+                    chain.pitchNode.port.postMessage([null, "configure", { blockMs: pSet.windowSizeMilliseconds, splitComputation: !pSet.applySmartProcessing }]);
                 }
 
                 const finalSemitones = pSet.pitchValueSemitones + pSet.pitchValueCents / 100 + (!usingHowler || !settings.preservePitch || globalRate <= 0 ? 0 : -12 * Math.log2(globalRate));
@@ -863,15 +867,330 @@
                 console.log("[WS] Context suspended, modulation activates on interaction");
             }
             oscillators.push(lfo);
+        } else if (type === "chorus") {
+            var chDepth = (params.depth || 50) / 100;
+            var chRate = params.rate || 1.5;
+            var chDelay = (params.delay || 20) / 1000;
+
+            var chDelay1 = ctx.createDelay(0.1);
+            var chDelay2 = ctx.createDelay(0.1);
+            var chLfo1 = ctx.createOscillator();
+            var chLfo2 = ctx.createOscillator();
+            var chLfoGain1 = ctx.createGain();
+            var chLfoGain2 = ctx.createGain();
+
+            chDelay1.delayTime.value = chDelay;
+            chDelay2.delayTime.value = chDelay * 1.2;
+
+            chLfo1.type = "sine";
+            chLfo1.frequency.value = chRate;
+            chLfo2.type = "sine";
+            chLfo2.frequency.value = chRate * 1.3;
+
+            chLfoGain1.gain.value = 0.005 * chDepth;
+            chLfoGain2.gain.value = 0.004 * chDepth;
+
+            chLfo1.connect(chLfoGain1);
+            chLfoGain1.connect(chDelay1.delayTime);
+            chLfo2.connect(chLfoGain2);
+            chLfoGain2.connect(chDelay2.delayTime);
+
+            input.connect(chDelay1);
+            input.connect(chDelay2);
+            chDelay1.connect(output);
+            chDelay2.connect(output);
+
+            try { chLfo1.start(); } catch (e) { }
+            try { chLfo2.start(); } catch (e) { }
+            oscillators.push(chLfo1, chLfo2);
+
+        } else if (type === "flanger") {
+            var flDepth = (params.depth || 70) / 100;
+            var flRate = params.rate || 0.5;
+            var flFeedback = (params.feedback || 50) / 100;
+            var flDelay = (params.delay || 2) / 1000;
+
+            var flDelayNode = ctx.createDelay(0.05);
+            var flLfo = ctx.createOscillator();
+            var flLfoGain = ctx.createGain();
+            var flFeedbackGain = ctx.createGain();
+
+            flDelayNode.delayTime.value = flDelay;
+            flLfo.type = "sine";
+            flLfo.frequency.value = flRate;
+            flLfoGain.gain.value = flDepth * 0.005; // макс модуляция ~5мс
+            flFeedbackGain.gain.value = flFeedback;
+
+            flLfo.connect(flLfoGain);
+            flLfoGain.connect(flDelayNode.delayTime);
+
+            input.connect(flDelayNode);
+            flDelayNode.connect(flFeedbackGain);
+            flFeedbackGain.connect(flDelayNode); // петля обратной связи
+            flDelayNode.connect(output);
+
+            try { flLfo.start(); } catch (e) { }
+            oscillators.push(flLfo);
+
+        } else if (type === "Vibrato") {
+            var vbDepth = (params.depth || 50) / 100;
+            var vbRate = params.rate || 5;
+
+            var vbDelay = ctx.createDelay(0.05);
+            var vbLfo = ctx.createOscillator();
+            var vbLfoGain = ctx.createGain();
+
+            vbDelay.delayTime.value = 0.01; // базовая задержка 10мс
+            vbLfo.type = "sine";
+            vbLfo.frequency.value = vbRate;
+            vbLfoGain.gain.value = 0.005 * vbDepth; // модуляция до 5мс в каждую сторону
+
+            vbLfo.connect(vbLfoGain);
+            vbLfoGain.connect(vbDelay.delayTime);
+
+            input.connect(vbDelay);
+            vbDelay.connect(output);
+
+            try { vbLfo.start(); } catch (e) { }
+            oscillators.push(vbLfo);
+
+        } else if (type === "autoPanner") {
+            var apDepth = (params.depth || 80) / 100;
+            var apRate = params.rate || 2;
+
+            var apPanner = ctx.createStereoPanner();
+            var apLfo = ctx.createOscillator();
+            var apLfoGain = ctx.createGain();
+
+            apPanner.pan.value = 0;
+            apLfo.type = "sine";
+            apLfo.frequency.value = apRate;
+            apLfoGain.gain.value = apDepth; // от -1 до 1
+
+            apLfo.connect(apLfoGain);
+            apLfoGain.connect(apPanner.pan);
+
+            input.connect(apPanner);
+            apPanner.connect(output);
+
+            try { apLfo.start(); } catch (e) { }
+            oscillators.push(apLfo);
+
+        } else if (type === "phaser") {
+            var phRate = params.rate || 0.5;
+            var phDepth = (params.depth || 60) / 100;
+            var phFeedback = (params.feedback || 40) / 100;
+            var phStages = params.stages || 4;
+
+            var phFilters = [];
+            for (var pi = 0; pi < phStages; pi++) {
+                var phF = ctx.createBiquadFilter();
+                phF.type = "allpass";
+                // Распределяем базовые частоты фильтров по спектру
+                phF.frequency.value = 500 + (1500 * pi / phStages);
+                phF.Q.value = 5; // Высокий Q делает "свип" более выраженным
+                phFilters.push(phF);
+            }
+
+            // Соединяем фильтры последовательно
+            for (var pj = 0; pj < phFilters.length - 1; pj++) {
+                phFilters[pj].connect(phFilters[pj + 1]);
+            }
+
+            var phLfo = ctx.createOscillator();
+            var phLfoGain = ctx.createGain();
+            var phFeedbackGain = ctx.createGain();
+
+            phLfo.type = "sine";
+            phLfo.frequency.value = phRate;
+            // Глубина модуляции: какой размах частот будет у LFO
+            phLfoGain.gain.value = phDepth * 2000;
+            phFeedbackGain.gain.value = phFeedback;
+
+            // Подключаем LFO ко всем фильтрам одновременно
+            phLfo.connect(phLfoGain);
+            phFilters.forEach(function (f) {
+                phLfoGain.connect(f.frequency);
+            });
+
+            // Сигнальный путь: input -> цепочка фильтров -> output
+            input.connect(phFilters[0]);
+            phFilters[phFilters.length - 1].connect(output);
+
+            // Петля обратной связи: последний фильтр -> feedback -> первый фильтр
+            phFilters[phFilters.length - 1].connect(phFeedbackGain);
+            phFeedbackGain.connect(phFilters[0]);
+
+            try { phLfo.start(); } catch (e) { }
+            oscillators.push(phLfo);
+
+        } else if (type === "autoFilter") {
+            var afRate = params.rate || 2;
+            var afDepth = (params.depth || 50) / 100;
+            var afBaseFreq = params.baseFreq || 1000;
+            var afOctaves = params.octaves || 2;
+
+            var afFilter = ctx.createBiquadFilter();
+            var afLfo = ctx.createOscillator();
+            var afLfoGain = ctx.createGain();
+
+            afFilter.type = "lowpass";
+            afFilter.frequency.value = afBaseFreq;
+            afFilter.Q.value = 10; // Резонанс придаёт характерное "квакание"
+
+            afLfo.type = "sine";
+            afLfo.frequency.value = afRate;
+
+            // LFO ходит от -X до +X. Считаем амплитуду, чтобы частота 
+            // менялась от baseFreq до baseFreq * 2^octaves
+            var afMaxFreq = afBaseFreq * Math.pow(2, afOctaves);
+            afLfoGain.gain.value = (afMaxFreq - afBaseFreq) / 2;
+
+            afLfo.connect(afLfoGain);
+            afLfoGain.connect(afFilter.frequency);
+
+            input.connect(afFilter);
+            afFilter.connect(output);
+
+            try { afLfo.start(); } catch (e) { }
+            oscillators.push(afLfo);
+
+        } else if (type === "rotarySpeaker") {
+            var rsDepth = (params.depth || 70) / 100;
+            var rsRate = params.rate || 1;
+
+            var rsDelay = ctx.createDelay(0.05);
+            rsDelay.delayTime.value = 0.01; // Базовая задержка для доплеровского эффекта
+
+            var rsLfo = ctx.createOscillator();
+            rsLfo.type = "sine";
+            rsLfo.frequency.value = rsRate;
+
+            // 1. Модуляция задержки (Допплер)
+            var rsDelayLfoGain = ctx.createGain();
+            rsDelayLfoGain.gain.value = 0.005 * rsDepth; // Макс модуляция ~5мс
+            rsLfo.connect(rsDelayLfoGain);
+            rsDelayLfoGain.connect(rsDelay.delayTime);
+
+            // 2. Амплитудная модуляция (Тремоло-составляющая)
+            var rsAmpGain = ctx.createGain();
+            rsAmpGain.gain.value = 1 - 0.5 * rsDepth; // Центральная громкость
+            var rsAmpLfoGain = ctx.createGain();
+            rsAmpLfoGain.gain.value = 0.5 * rsDepth;
+            rsLfo.connect(rsAmpLfoGain);
+            rsAmpLfoGain.connect(rsAmpGain.gain);
+
+            // 3. Пространственное вращение (Стерео-панорама)
+            var rsPanner = ctx.createStereoPanner();
+            var rsPanLfoGain = ctx.createGain();
+            rsPanLfoGain.gain.value = rsDepth; // Полная ширина панорамы при depth=100
+            rsLfo.connect(rsPanLfoGain);
+            rsPanLfoGain.connect(rsPanner.pan);
+
+            // Собираем сигнал
+            input.connect(rsDelay);
+            rsDelay.connect(rsAmpGain);
+            rsAmpGain.connect(rsPanner);
+            rsPanner.connect(output);
+
+            try { rsLfo.start(); } catch (e) { }
+            oscillators.push(rsLfo);
+
+        } else if (type === "ringModulator") {
+            var rmFreq = params.frequency || 440;
+            var rmMix = (params.mix || 50) / 100;
+
+            // Dry путь
+            var rmDryGain = ctx.createGain();
+            rmDryGain.gain.value = 1 - rmMix;
+
+            // Wet путь (Сам Ring Modulator)
+            var rmWetGain = ctx.createGain();
+            rmWetGain.gain.value = rmMix;
+
+            // Магия Ring Mod нативно: Gain с базовым значением 0.
+            // Выход = Input * (0 + Carrier * 1) = Input * Carrier
+            var rmModulatorGain = ctx.createGain();
+            rmModulatorGain.gain.value = 0;
+
+            var rmCarrier = ctx.createOscillator();
+            rmCarrier.type = "sine";
+            rmCarrier.frequency.value = rmFreq;
+            rmCarrier.connect(rmModulatorGain.gain);
+
+            // Роутинг
+            input.connect(rmDryGain);
+            input.connect(rmModulatorGain);
+            rmModulatorGain.connect(rmWetGain);
+
+            rmDryGain.connect(output);
+            rmWetGain.connect(output);
+
+            try { rmCarrier.start(); } catch (e) { }
+            oscillators.push(rmCarrier);
+
+        } else if (type === "vowelFilter") {
+            var vfRate = params.rate || 2;
+            var vfVowel = Math.round(params.vowel || 0);
+
+            // Формантные частоты [F1, F2] для гласных А, Э, И, О, У
+            var vfFormants = [
+                [800, 1200],  // A
+                [400, 2200],  // E
+                [270, 2300],  // I
+                [500, 1000],  // O
+                [325, 800]    // U
+            ];
+            var vfCurrent = vfFormants[vfVowel] || vfFormants[0];
+
+            // Два резонансных фильтра для формант
+            var vfFilter1 = ctx.createBiquadFilter();
+            vfFilter1.type = "peaking";
+            vfFilter1.frequency.value = vfCurrent[0];
+            vfFilter1.Q.value = 12;
+            vfFilter1.gain.value = 15; // Усиление для явного выделения формант
+
+            var vfFilter2 = ctx.createBiquadFilter();
+            vfFilter2.type = "peaking";
+            vfFilter2.frequency.value = vfCurrent[1];
+            vfFilter2.Q.value = 12;
+            vfFilter2.gain.value = 15;
+
+            // Статический сигнал (если rate = 0)
+            input.connect(vfFilter1);
+            vfFilter1.connect(vfFilter2);
+            vfFilter2.connect(output);
+
+            // Если rate > 0, добавляем LFO для "пения"
+            if (vfRate > 0) {
+                var vfLfo = ctx.createOscillator();
+                vfLfo.type = "sine";
+                vfLfo.frequency.value = vfRate;
+
+                // LFO добавляется к базовой частоте. 
+                // Рассчитываем амплитуду, чтобы LFO (-1..1) покрывал весь диапазон формант:
+                // F1: от 270 до 800. Середина ~535, амплитуда ~265.
+                var vfLfoGain1 = ctx.createGain();
+                vfLfoGain1.gain.value = 265;
+                vfLfo.connect(vfLfoGain1);
+                vfLfoGain1.connect(vfFilter1.frequency);
+
+                // F2: от 800 до 2300. Середина ~1550, амплитуда ~750.
+                var vfLfoGain2 = ctx.createGain();
+                vfLfoGain2.gain.value = 750;
+                vfLfo.connect(vfLfoGain2);
+                vfLfoGain2.connect(vfFilter2.frequency);
+
+                try { vfLfo.start(); } catch (e) { }
+                oscillators.push(vfLfo);
+            }
+
         } else {
+            console.warn("[WS Modulation] Unknown effect type:", type);
             input.connect(output);
         }
 
-        return {
-            input: input,
-            output: output,
-            oscillators: oscillators
-        };
+        return { input: input, output: output, oscillators: oscillators };
     }
 
     function refreshModulationGraph() {

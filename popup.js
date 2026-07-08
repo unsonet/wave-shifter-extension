@@ -49,246 +49,46 @@ const simpleModal = globalThis['simpleModal'];
     // Схема описывает, какие слайдеры есть у каждого типа модуляции.
     // Это позволит легко добавлять Ring Mod, Vowel и т.д. без изменения логики рендера.
     const MODULATION_SCHEMAS = {
-        chorus: [{
-            id: "rate",
-            label: "Rate",
-            min: .1,
-            max: 10,
-            step: .1,
-            def: 1.5,
-            unit: "Hz"
-        }, {
-            id: "depth",
-            label: "Depth",
-            min: 0,
-            max: 100,
-            step: 1,
-            def: 50,
-            unit: "%"
-        }, {
-            id: "mix",
-            label: "Mix",
-            min: 0,
-            max: 100,
-            step: 1,
-            def: 50,
-            unit: "%"
-        }, {
-            id: "delay",
-            label: "Delay",
-            min: 0,
-            max: 50,
-            step: .5,
-            def: 20,
-            unit: "ms"
-        }, {
-            id: "feedback",
-            label: "Feedback",
-            min: 0,
-            max: 90,
-            step: 1,
-            def: 0,
-            unit: "%"
-        }, {
-            id: "spread",
-            label: "Spread",
-            min: 0,
-            max: 100,
-            step: 1,
-            def: 50,
-            unit: "%"
-        }],
-        flanger: [{
-            id: "rate",
-            label: "Rate",
-            min: .1,
-            max: 10,
-            step: .1,
-            def: .5,
-            unit: "Hz"
-        }, {
-            id: "depth",
-            label: "Depth",
-            min: 0,
-            max: 100,
-            step: 1,
-            def: 70,
-            unit: "%"
-        }, {
-            id: "mix",
-            label: "Mix",
-            min: 0,
-            max: 100,
-            step: 1,
-            def: 50,
-            unit: "%"
-        }, {
-            id: "delay",
-            label: "Delay",
-            min: 0,
-            max: 10,
-            step: .1,
-            def: 2,
-            unit: "ms"
-        }, {
-            id: "feedback",
-            label: "Feedback",
-            min: 0,
-            max: 90,
-            step: 1,
-            def: 50,
-            unit: "%"
-        }],
-        phaser: [{
-            id: "rate",
-            label: "Rate",
-            min: .1,
-            max: 10,
-            step: .1,
-            def: .5,
-            unit: "Hz"
-        }, {
-            id: "depth",
-            label: "Depth",
-            min: 0,
-            max: 100,
-            step: 1,
-            def: 60,
-            unit: "%"
-        }, {
-            id: "mix",
-            label: "Mix",
-            min: 0,
-            max: 100,
-            step: 1,
-            def: 50,
-            unit: "%"
-        }, {
-            id: "feedback",
-            label: "Feedback",
-            min: 0,
-            max: 90,
-            step: 1,
-            def: 40,
-            unit: "%"
-        }, {
-            id: "stages",
-            label: "Stages",
-            min: 1,
-            max: 12,
-            step: 1,
-            def: 4,
-            unit: ""
-        }],
-        tremolo: [{
-            id: "rate",
-            label: "Rate",
-            min: .1,
-            max: 20,
-            step: .1,
-            def: 5,
-            unit: "Hz"
-        }, {
-            id: "depth",
-            label: "Depth",
-            min: 0,
-            max: 100,
-            step: 1,
-            def: 50,
-            unit: "%"
-        }, {
-            id: "shape",
-            label: "Shape",
-            min: 0,
-            max: 2,
-            step: 1,
-            def: 0,
-            unit: ""
-        }],
-        Vibrato: [{
-            id: "rate",
-            label: "Rate",
-            min: .1,
-            max: 10,
-            step: .1,
-            def: 5,
-            unit: "Hz"
-        }, {
-            id: "depth",
-            label: "Depth",
-            min: 0,
-            max: 100,
-            step: 1,
-            def: 50,
-            unit: "%"
-        }],
-        rotarySpeaker: [{
-            id: "rate",
-            label: "Rate",
-            min: .1,
-            max: 8,
-            step: .1,
-            def: 1,
-            unit: "Hz"
-        }, {
-            id: "depth",
-            label: "Depth",
-            min: 0,
-            max: 100,
-            step: 1,
-            def: 70,
-            unit: "%"
-        }, {
-            id: "mix",
-            label: "Mix",
-            min: 0,
-            max: 100,
-            step: 1,
-            def: 100,
-            unit: "%"
-        }],
-        ringModulator: [{
-            id: "frequency",
-            label: "Freq",
-            min: 20,
-            max: 5e3,
-            step: 1,
-            def: 440,
-            unit: "Hz"
-        }, {
-            id: "mix",
-            label: "Mix",
-            min: 0,
-            max: 100,
-            step: 1,
-            def: 50,
-            unit: "%"
-        }],
-        vowelFilter: [{
-            id: "rate",
-            label: "Rate",
-            min: .1,
-            max: 5,
-            step: .1,
-            def: 2,
-            unit: "Hz"
-        }, {
-            id: "mix",
-            label: "Mix",
-            min: 0,
-            max: 100,
-            step: 1,
-            def: 50,
-            unit: "%"
-        }, {
-            id: "vowel",
-            label: "Vowel",
-            min: 0,
-            max: 4,
-            step: 1,
-            def: 0,
-            unit: ""
-        }]
+        chorus: {
+            name: "Chorus",
+            options: [{ id: "rate", label: "Rate", min: .1, max: 10, step: .1, def: 1.5, unit: "Hz" }, { id: "depth", label: "Depth", min: 0, max: 100, step: 1, def: 50, unit: "%" }, { id: "mix", label: "Mix", min: 0, max: 100, step: 1, def: 50, unit: "%" }, { id: "delay", label: "Delay", min: 0, max: 50, step: .5, def: 20, unit: "ms" }, { id: "feedback", label: "Feedback", min: 0, max: 90, step: 1, def: 0, unit: "%" }, { id: "spread", label: "Spread", min: 0, max: 100, step: 1, def: 50, unit: "%" }]
+        },
+        flanger: {
+            name: "Flanger",
+            options: [{ id: "rate", label: "Rate", min: .1, max: 10, step: .1, def: .5, unit: "Hz" }, { id: "depth", label: "Depth", min: 0, max: 100, step: 1, def: 70, unit: "%" }, { id: "mix", label: "Mix", min: 0, max: 100, step: 1, def: 50, unit: "%" }, { id: "delay", label: "Delay", min: 0, max: 10, step: .1, def: 2, unit: "ms" }, { id: "feedback", label: "Feedback", min: 0, max: 90, step: 1, def: 50, unit: "%" }]
+        },
+        phaser: {
+            name: "Phaser",
+            options: [{ id: "rate", label: "Rate", min: .1, max: 10, step: .1, def: .5, unit: "Hz" }, { id: "depth", label: "Depth", min: 0, max: 100, step: 1, def: 60, unit: "%" }, { id: "mix", label: "Mix", min: 0, max: 100, step: 1, def: 50, unit: "%" }, { id: "feedback", label: "Feedback", min: 0, max: 90, step: 1, def: 40, unit: "%" }, { id: "stages", label: "Stages", min: 1, max: 12, step: 1, def: 4, unit: "" }]
+        },
+        tremolo: {
+            name: "Tremolo",
+            options: [{ id: "rate", label: "Rate", min: .1, max: 20, step: .1, def: 5, unit: "Hz" }, { id: "depth", label: "Depth", min: 0, max: 100, step: 1, def: 50, unit: "%" }, { id: "shape", label: "Shape", min: 0, max: 2, step: 1, def: 0, unit: "" }]
+        },
+        Vibrato: {
+            name: "Vibrato",
+            options: [{ id: "rate", label: "Rate", min: .1, max: 10, step: .1, def: 5, unit: "Hz" }, { id: "depth", label: "Depth", min: 0, max: 100, step: 1, def: 50, unit: "%" }]
+        },
+        rotarySpeaker: {
+            name: "Rotary Speaker",
+            options: [{ id: "rate", label: "Rate", min: .1, max: 8, step: .1, def: 1, unit: "Hz" }, { id: "depth", label: "Depth", min: 0, max: 100, step: 1, def: 70, unit: "%" }, { id: "mix", label: "Mix", min: 0, max: 100, step: 1, def: 100, unit: "%" }]
+        },
+        ringModulator: {
+            name: "Ring Modulator",
+            options: [{ id: "frequency", label: "Freq", min: 20, max: 5e3, step: 1, def: 440, unit: "Hz" }, { id: "mix", label: "Mix", min: 0, max: 100, step: 1, def: 50, unit: "%" }]
+        },
+        vowelFilter: {
+            name: "Vowel Filter",
+            options: [{ id: "rate", label: "Rate", min: .1, max: 5, step: .1, def: 2, unit: "Hz" }, { id: "mix", label: "Mix", min: 0, max: 100, step: 1, def: 50, unit: "%" }, { id: "vowel", label: "Vowel", min: 0, max: 4, step: 1, def: 0, unit: "" }]
+        },
+        autoPanner: {
+            name: "Auto Panner",
+            options: [{ id: "rate", label: "Rate", min: 0.1, max: 10, step: 0.1, def: 2, unit: "Hz" }, { id: "depth", label: "Depth", min: 0, max: 100, step: 1, def: 80, unit: "%" }]
+        },
+        autoFilter: {
+            name: "Auto Filter",
+            options: [{ id: "rate", label: "Rate", min: 0.1, max: 10, step: 0.1, def: 2, unit: "Hz" }, { id: "depth", label: "Depth", min: 0, max: 100, step: 1, def: 50, unit: "%" }, { id: "baseFreq", label: "Base Freq", min: 100, max: 5000, step: 10, def: 1000, unit: "Hz" }, { id: "octaves", label: "Octaves", min: 0.5, max: 4, step: 0.5, def: 2, unit: "oct" }]
+        }
     };
 
 
@@ -560,7 +360,7 @@ const simpleModal = globalThis['simpleModal'];
                 const header = document.createElement("div");
                 header.className = "modulation-row__header";
                 const title = document.createElement("span");
-                title.textContent = layer.type.charAt(0).toUpperCase() + layer.type.slice(1);
+                title.textContent = MODULATION_SCHEMAS[layer.type]?.name || (layer.type.charAt(0).toUpperCase() + layer.type.slice(1));
                 const closeBtn = document.createElement("button");
                 closeBtn.className = "close";
                 closeBtn.type = "button";
@@ -575,7 +375,7 @@ const simpleModal = globalThis['simpleModal'];
                 slidersContainer.style.height = "150px";
                 slidersContainer.style.gap = "8px";
 
-                schema.forEach(param => {
+                schema.options.forEach(param=>{
                     const currentVal = void 0 !== layer.params[param.id] ? layer.params[param.id] : param.def;
 
                     const sliderWrapper = document.createElement("div");
@@ -761,9 +561,7 @@ const simpleModal = globalThis['simpleModal'];
         };
 
         // Заполняем параметры дефолтными значениями из схемы
-        MODULATION_SCHEMAS[type].forEach(p => {
-            newLayer.params[p.id] = p.def;
-        });
+        MODULATION_SCHEMAS[type].options.forEach(p=>{newLayer.params[p.id]=p.def});
 
         currentSettings.modulationLayers.push(newLayer);
         renderModulationLayers();
@@ -796,9 +594,9 @@ const simpleModal = globalThis['simpleModal'];
                 layer = (currentSettings.modulationLayers || []).find(l => l.id === layerId);
             if (layer && layer.params && paramId) {
                 layer.params[paramId] = val, syncVisualSlider(e.target);
-                const schema = MODULATION_SCHEMAS[layer.type], paramDef = schema ? schema.find(function (p) {
-                    return p.id === paramId
-                }) : null, unit = paramDef ? paramDef.unit : "";
+                const schema = MODULATION_SCHEMAS[layer.type]; 
+                const paramDef=schema?schema.options.find(function(p){return p.id===paramId}):null;
+                const unit = paramDef ? paramDef.unit : "";
                 const wrapper = e.target.closest(".range-slider");
                 if (wrapper) {
                     const topLabel = wrapper.querySelector(".range-slider__legend-top");

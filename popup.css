@@ -779,7 +779,7 @@ select {
   position: relative;
   height: 130px;
   display: flex;
-  justify-content: space-between;
+  justify-content: space-around;
   padding: 0 2px;
 }
 
