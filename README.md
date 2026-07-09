@@ -17,6 +17,9 @@ Unlike simple playback-rate controls, Wave Shifter can shift pitch independently
 - 🎧 Stereo widener
 - ⚖ Stereo channel balance control
 - 🎚 Dynamic range compressor with configurable threshold, knee, ratio, attack and release
+- 🎸 Lo-Fi effects (Distortion, Bitcrusher, CD Skipper, Vinyl) with layer-based routing and mix control
+- ⏱ Stereo ping-pong delay with time, feedback, and mix controls
+- 🎹 10 modulation effects (Chorus, Flanger, Phaser, Tremolo, Vibrato, Rotary Speaker, Ring Modulator, Vowel Filter, Auto Panner, Auto Filter) with layer-based chaining
 - 🎬 Experimental Dolby Surround (5.1) upmix
 - 🧠 Smart processing mode for improved performance
 - 🔧 Adjustable processing block size
@@ -183,6 +186,52 @@ Available controls:
 
 The compressor can reduce excessive peaks and produce a more consistent listening experience.
 
+### Lo-Fi
+
+Wave Shifter includes a set of lo-fi audio effects that can be layered and mixed together.
+
+Available effects:
+
+- **Distortion**: Applies waveshaping distortion with adjustable amount and tone.
+- **Bitcrusher**: Reduces bit depth and sample rate for a crunchy, digital lo-fi sound.
+- **CD Skipper**: Simulates a skipping CD by looping small segments of audio.
+- **Vinyl**: Adds vinyl record artifacts such as hiss and crackle.
+
+Effects can be stacked in any order using the layer system. Each layer has its own parameters, and the overall wet/dry balance is controlled by the Mix slider.
+
+### Delay
+
+Wave Shifter features a stereo ping-pong delay effect.
+
+Available controls:
+
+- **Time**: Controls the delay time in milliseconds.
+- **Feedback**: Controls how much of the delayed signal is fed back into the delay line. Higher values produce longer repeating echoes.
+- **Mix**: Controls the wet/dry balance of the delay effect.
+
+The delay alternates between the left and right channels to create a wide, spatial echo effect.
+
+### Modulation
+
+Wave Shifter provides 10 modulation effects that can be chained together in any order using a layer-based system.
+
+Available effects:
+
+- **Chorus**
+- **Flanger**
+- **Phaser**
+- **Tremolo**
+- **Vibrato**
+- **Rotary Speaker**
+- **Ring Modulator**
+- **Vowel Filter**
+- **Auto Panner**
+- **Auto Filter**
+
+Each layer has independent parameters such as rate, depth, and effect-specific options. Layers are processed in the order they are added.
+
+
+
 ### Surround
 
 Experimental Dolby Surround (5.1) upmix.
@@ -200,6 +249,9 @@ The processing pipeline may include:
 - Pitch shifting
 - Time stretching
 - Equalization
+- Lo-Fi effects
+- Modulation effects
+- Delay
 - Reverb
 - Stereo widening
 - Dynamic compression
@@ -284,10 +336,14 @@ wave-shifter/
 ├── popup.js
 ├── content.js
 ├── page-hook.js
+├── background.js
+├── rules.json
 ├── __pitch_shifter_worklet.js
 └── src/
     └── js/
-        └── SignalsmithStretch.min.js
+        ├── SignalsmithStretch.min.js
+        ├── audio-effects-worklet.js
+        └── pitch-correlator-processor.js
 ```
 
 ## Contributing

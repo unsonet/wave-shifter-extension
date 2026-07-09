@@ -312,7 +312,8 @@ const simpleModal = globalThis['simpleModal'];
 
         if (isDefault) {
             // 1. Если мы на нем стояли - переключаемся на default
-            if ("custom" === currentSettings.globalPreset) {
+            const wasCustom = "custom" === currentSettings.globalPreset;
+            if (wasCustom) {
                 currentSettings.globalPreset = "default";
                 globalPresetSelect.value = "default";
             }
@@ -323,13 +324,12 @@ const simpleModal = globalThis['simpleModal'];
             }
 
             // 3. ФИЗИЧЕСКИ УДАЛЯЕМ из памяти ВСЕГДА, без всяких условий!
-            if (currentSettings.globalPresets?.custom) {
-                delete currentSettings.globalPresets.custom;
+            if (wasCustom) {
+                delete currentSettings.globalPresets?.custom;
             }
 
             // 4. СБРАСЫВАЕМ блокировку, чтобы при следующих изменениях custom снова появился
             userDisabledCustomInOverlay = false;
-
             updateGlobalPresetSelectUI();
             return;
         }
@@ -1357,11 +1357,10 @@ const simpleModal = globalThis['simpleModal'];
         if (!preset) return;
         currentSettings.globalPreset = presetId;
         const vals = preset.values;
-        for (const key in vals) {
-            if (key === "eqGains") continue; // EQ пресеты независимы
-            currentSettings[key] = JSON.parse(JSON.stringify(vals[key]));
-        }
-        updateUI();
+        const skip = new Set(["eqGains", "blacklistPatterns", "toggleState", "eqPresets", "globalPresets", "overlayPresets", "overlayEnabled", "optimisationDelay"]);
+        for (const key in vals)
+            if (!skip.has(key)) currentSettings[key] = JSON.parse(JSON.stringify(vals[key]));
+        updateUI()
     }
 
     globalPresetsBtn.addEventListener("click", () => {

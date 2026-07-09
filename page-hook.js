@@ -1947,9 +1947,16 @@
 
                 // 7. Финализация
                 connectedMediaElements.add(mediaEl);
-                mediaEl.__pitchConnected = true;
-
-                if (overlayMode && !overlayGraphBuilt) {
+                mediaEl.__pitchConnected = !0;
+                // Apply bypass if site is blacklisted (handles case when graph is built for the first time while blacklisted)
+                if (siteIsBlacklisted && sourceGain && audioCtx) {
+                    if (overlayMode) {
+                        try { globalLimiterNode?.disconnect() } catch (e) { }
+                    } else {
+                        try { limiterNode?.disconnect() } catch (e) { }
+                    }
+                    try { sourceGain?.connect(audioCtx.destination) } catch (e) { }
+                } else if (overlayMode && !overlayGraphBuilt) {
                     await rebuildGraph();
                 } else if (!overlayMode) {
                     refreshAllNodes();
@@ -1991,68 +1998,57 @@
 
             if (siteIsBlacklisted) {
                 // --- САЙТ В БЛЭКЛИСТЕ: Полный сброс ---
-                if (pitchNode && isNodeReady) {
-                    if (activeProcessorType === 'signalsmith') {
-                        pitchNode.port.postMessage([null, "start", { active: true, semitones: 0, tonalityHz: 8800 }]);
-                    } else if (activeProcessorType === 'correlator' && correlatorNodes) {
-                        correlatorNodes.freqSrc.offset.value = 0;
-                        correlatorNodes.wss.offset.value = 0;
-                    }
+                // Bypass: disconnect processing chain from destination, connect sourceGain directly to destination
+                if (overlayMode) {
+                    try { globalLimiterNode?.disconnect() } catch (e) { }
+                    try { sourceGain?.connect(audioCtx.destination) } catch (e) { }
+                } else {
+                    try { limiterNode?.disconnect() } catch (e) { }
+                    try { sourceGain?.connect(audioCtx.destination) } catch (e) { }
                 }
-                if (gainNode) gainNode.gain.value = 1;
-                eqFilters.forEach(f => { f.gain.value = 0; });
-                if (wetGainNode) wetGainNode.gain.value = 0;
-                if (subLeftGain) subLeftGain.gain.value = 0;
-                if (subRightGain) subRightGain.gain.value = 0;
-                if (stereoPannerNode) stereoPannerNode.pan.value = 0;
-                if (compressorNode) {
-                    compressorNode.threshold.value = 0;
-                    compressorNode.knee.value = 30;
-                    compressorNode.ratio.value = 1;
-                    compressorNode.attack.value = 0.003;
-                    compressorNode.release.value = 0.25;
-                }
-                if (settings.dolbyEnabled && dolbyInputNode) refreshDolby();
-
+                // Reset media element playback rates
                 connectedMediaElements.forEach(el => {
                     try {
                         el.playbackRate = 1;
                         el.defaultPlaybackRate = 1;
-                        if ("preservesPitch" in el) el.preservesPitch = true;
-                        if ("webkitPreservesPitch" in el) el.webkitPreservesPitch = true;
+                        "preservesPitch" in el && (el.preservesPitch = !0);
+                        "webkitPreservesPitch" in el && (el.webkitPreservesPitch = !0);
                         el.__lastRateSetByUs = Date.now();
                     } catch (e) { }
                 });
+                // Bypass Howler
 
                 if (usingHowler) {
-                    routeHowler(true);
+                    routeHowler(!0);
                     const howler = window.Howler;
                     if (howler) {
                         const howls = Array.isArray(howler._howls) ? howler._howls : [];
                         for (const howl of howls) {
-                            try { if (typeof howl.rate === "function") howl.rate(1); howl._rate = 1; } catch (e) { }
-                            const sounds = Array.isArray(howler._sounds) ? howler._sounds : [];
-                            for (const sound of sounds) {
-                                sound._rate = 1;
-                                const node = sound?._node;
-                                if (node?.playbackRate) node.playbackRate.value = 1;
-                                if (node?.bufferSource?.playbackRate) node.bufferSource.playbackRate.value = 1;
-                            }
+                            try { "function" == typeof howl.rate && howl.rate(1), howl._rate = 1 } catch (e) { }
+                        }
+                        const sounds = Array.isArray(howler._sounds) ? howler._sounds : [];
+                        for (const sound of sounds) {
+                            sound._rate = 1;
+                            const node = sound?._node;
+                            node?.playbackRate && (node.playbackRate.value = 1);
+                            node?.bufferSource?.playbackRate && (node.bufferSource.playbackRate.value = 1);
                         }
                     }
                 }
             } else {
-                // --- САЙТ УБРАН ИЗ БЛЭКЛИСТА: Сбрасываем флаги стандартного графа ---
-                pitchNode = null;
-                eqFilters = [];
-                isNodeReady = false;
-                gainNode = null;
-                limiterNode = null;
+                // Remove bypass: disconnect sourceGain from destination (chain will be reconnected below)
+                try { sourceGain?.disconnect(audioCtx.destination) } catch (e) { }
             }
         }
 
         // --- ОСНОВНАЯ ЛОГИКА (Выполняется ВСЕГДА, если сайт не в блэклисте) ---
         if (!siteIsBlacklisted) {
+            // Reconnect processing chain to destination (reversing bypass)
+            if (overlayMode) {
+                try { globalLimiterNode?.connect(audioCtx.destination) } catch (e) { }
+            } else if (limiterNode) {
+                try { limiterNode?.connect(audioCtx.destination) } catch (e) { }
+            }
             usingHowler ? syncHowlerSpeed() : connectedMediaElements.forEach(el => applySpeedSettings(el));
             const mediaElements = Array.from(document.querySelectorAll("audio, video"));
             for (const el of mediaElements) el.__pitchSource || await connectMediaElement(el);
