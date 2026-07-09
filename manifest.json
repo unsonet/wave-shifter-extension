@@ -45,6 +45,7 @@
       "resources": [
         "page-hook.js",
         "__pitch_shifter_worklet.js",
+        "src/js/audio-effects-worklet.js",
         "src/js/pitch-correlator-processor.js", 
         "src/js/SignalsmithStretch.min.js",
         "src/sounds/*.wav"

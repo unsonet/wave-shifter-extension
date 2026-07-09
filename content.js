@@ -127,7 +127,7 @@ if (
         reverbWet: 0,
         stereoWiden: 0,
         channelBalance: 0,
-        modulationLayers: []
+        modulationLayers:[],distortionLayers:[],distMix:0,delayTime:250,delayFeedback:40,delayMix:0
     };
 
     const allPresets = {

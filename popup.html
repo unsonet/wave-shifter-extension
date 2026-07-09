@@ -227,9 +227,70 @@
                 <div class="range-slider__thumb"></div>
             </div>
         </div>
-    </details>
+          </div></details>
+      
+      <details id="delayPanel">
+        <summary><div class="summary-container"><span>Delay</span><div class="reset-icon" data-section="#delayPanel"></div></div></summary>
+        <div class="control" style="margin-top:10px;">
+          <label>Time: <span id="delayTimeVal">250 ms</span></label>
+          <div class="range-slider" style="--orientation: horizontal;">
+            <input type="range" id="delayTime" min="10" max="1000" step="1" value="250">
+            <div class="range-slider__track"></div>
+            <div class="range-slider__bar"></div>
+            <div class="range-slider__thumb"></div>
+          </div>
+        </div>
+        <div class="control" style="margin-top:10px;">
+          <label>Feedback: <span id="delayFeedbackVal">40%</span></label>
+          <div class="range-slider" style="--orientation: horizontal;">
+            <input type="range" id="delayFeedback" min="0" max="90" step="1" value="40">
+            <div class="range-slider__track"></div>
+            <div class="range-slider__bar"></div>
+            <div class="range-slider__thumb"></div>
+          </div>
+        </div>
+        <div class="control" style="margin-top:10px;">
+          <label>Mix: <span id="delayMixVal">0%</span></label>
+          <div class="range-slider" style="--orientation: horizontal;">
+            <input type="range" id="delayMix" min="0" max="100" step="1" value="0">
+            <div class="range-slider__track"></div>
+            <div class="range-slider__bar"></div>
+            <div class="range-slider__thumb"></div>
+          </div>
+        </div>
+        
+        <!-- ЗАРЕЗЕРВИРОВАНО ДЛЯ БУДУЩЕГО BPM SYNC -->
+        <div class="row" style="margin-top:12px; opacity: 0.5; pointer-events: none;">
+          <input type="checkbox" id="delayBpmSync" disabled>
+          <label>Sync to BPM</label>
+          <input type="number" id="delayBpmValue" value="120" min="40" max="300" style="width: 50px; margin-left: 8px; padding: 2px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: white; border-radius: 4px;" disabled>
+          <span style="margin-left: 4px; font-size: 12px;">BPM</span>
+        </div>
+      </details>
 
-    <details id="dynamicsPanel">
+            <details id="distortionPanel">
+        <summary><div class="summary-container"><span>Lo-Fi</span><div class="reset-icon" data-section="#distortionPanel"></div></div></summary>
+        <div class="modulation-layers" style="display:flex;gap:8px;align-items:center;">
+          <select id="lofiLayer">
+            <option value="distortion">Distortion</option>
+            <option value="bitcrusher">Bitcrusher</option>
+            <option value="cdskipper">CD Skipper</option>
+            <option value="vinyl">Vinyl</option>
+          </select>
+          <button id="lofiLayerAddBtn" class="btn-vk link" type="button">Add Layer</button>
+        </div>
+        <div id="lofi-items" class="layers-items"></div>
+        
+        <div class="control" style="margin-top:10px;">
+          <label>Mix: <span id="distMixVal">0%</span></label>
+          <div class="range-slider" style="--orientation: horizontal;">
+            <input type="range" id="distMix" min="0" max="100" step="1" value="0">
+            <div class="range-slider__track"></div><div class="range-slider__bar"></div><div class="range-slider__thumb"></div>
+          </div>
+        </div>
+      </details>
+
+      <details id="dynamicsPanel">
         <summary>
             <div class="summary-container"><span>Dynamics</span>
                 <div class="reset-icon" data-section="#dynamicsPanel"></div>
@@ -303,7 +364,7 @@
             <button id="modulationLayerAddBtn" class="btn-vk link" type="button">Add Layer</button>
         </div>
 
-        <div id="modulation-items"></div>
+        <div id="modulation-items" class="layers-items"></div>
     </details>
 
     <div class="row">
