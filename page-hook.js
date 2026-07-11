@@ -210,13 +210,16 @@
 
 
 
-                    var chainDistIn = audioCtx.createGain();
-                    var chainDistOut = audioCtx.createGain();
+
+                    var chainDistIn=audioCtx.createGain();
+                    var chainDistOut=audioCtx.createGain();
+                    var chainDistDry=audioCtx.createGain();
                     var chainDelayIn = audioCtx.createGain();
                     var chainDelayOut = audioCtx.createGain();
 
                     // Правильная последовательность: Dist -> Delay -> Gain
-                    chainDistIn.connect(chainDistOut);
+                    chainDistIn.connect(chainDistDry);
+                    chainDistDry.connect(chainDistOut);
                     chainDelayIn.connect(chainDelayOut);
                     chainBalance.connect(chainDistIn);
                     chainDistOut.connect(chainDelayIn);
@@ -311,9 +314,10 @@
                         delayIn: chainDelayIn,
                         delayOut: chainDelayOut,
                         delayNodes: null,
-                        distIn: chainDistIn,
-                        distOut: chainDistOut,
-                        distNodes: null
+                        distIn:chainDistIn,
+                        distOut:chainDistOut,
+                        distDry:chainDistDry,
+                        distNodes:null
                     });
 
                 } catch (chainError) {
@@ -469,82 +473,38 @@
                 var layers = pSet.distortionLayers;
                 var mix = (pSet.distMix || 0) / 100;
 
-                if (!layers || !layers.length || mix <= 0) {
+                if (!layers || !layers.length) {
                     if (c.distNodes) {
-                        c.distNodes.forEach(function (n) {
-                            try { n.input.disconnect(); } catch (e) { }
-                            try { n.output.disconnect(); } catch (e) { }
-                            if (n.processors) {
-                                n.processors.forEach(function (p) {
-                                    try { p.disconnect(); } catch (e) { }
-                                });
-                            }
-                        });
+                        c.distNodes.forEach(function (n) { try { n.input.disconnect() } catch (e) { } try { n.output.disconnect() } catch (e) { } n.processors && n.processors.forEach(function (p) { try { p.disconnect() } catch (e) { } }) });
                         c.distNodes = null;
                         c._lastDistLayersHash = null;
                     }
-                    if (!c._distBypassed) {
-                        try { c.distIn.disconnect(c.distOut); } catch (e) { }
-                        c.distIn.connect(c.distOut);
-                        c._distBypassed = true;
-                    }
+                    if (c.distDry) c.distDry.gain.linearRampToValueAtTime(1, audioCtx.currentTime + 0.02);
                 } else {
-                    c._distBypassed = false;
-                    var chainHash = layers.map(function (l) { return l.type; }).join("-");
-
+                    var chainHash = layers.map(function (l) { return l.type }).join("-");
                     if (c.distNodes && c._lastDistLayersHash === chainHash) {
                         c.distNodes.forEach(function (node, idx) {
                             var l = layers[idx];
                             if (l && node.workletNode && node.workletNode.parameters) {
                                 var p = node.workletNode.parameters;
-                                if (l.type === "bitcrusher") {
-                                    if (p.has("bits")) p.get("bits").value = l.params.bits || 8;
-                                    if (p.has("normRange")) p.get("normRange").value = l.params.normRange || 40;
-                                } else if (l.type === "cdskipper") {
-                                    if (p.has("loopMs")) p.get("loopMs").value = l.params.loopMs || 200;
-                                    if (p.has("repeats")) p.get("repeats").value = l.params.repeats || 4;
-                                } else if (l.type === "vinyl") {
-                                    if (p.has("noise")) p.get("noise").value = (l.params.noise || 0) / 100;
-                                    if (p.has("crackle")) p.get("crackle").value = (l.params.crackle || 0) / 100;
-                                }
+                                "bitcrusher" === l.type ? (p.has("bits") && (p.get("bits").value = l.params.bits || 8), p.has("normRange") && (p.get("normRange").value = l.params.normRange || 40)) : "cdskipper" === l.type ? (p.has("loopMs") && (p.get("loopMs").value = l.params.loopMs || 200), p.has("repeats") && (p.get("repeats").value = l.params.repeats || 4)) : "vinyl" === l.type && (p.has("noise") && (p.get("noise").value = (l.params.noise || 0) / 100), p.has("crackle") && (p.get("crackle").value = (l.params.crackle || 0) / 100))
                             } else if (l && node.processors) {
-                                node.processors.forEach(function (p) {
-                                    if (l.type === "distortion") {
-                                        if (p.shaper) p.shaper.curve = makeDistCurve((l.params.amount || 50) / 100);
-                                        if (p.tone) p.tone.frequency.value = 2000 + (l.params.tone || 50) / 100 * 8000;
-                                    }
-                                });
+                                node.processors.forEach(function (p) { "distortion" === l.type && (p.shaper && (p.shaper.curve = makeDistCurve((l.params.amount || 50) / 100)), p.tone && (p.tone.frequency.value = 2e3 + (l.params.tone || 50) / 100 * 8e3)) })
                             }
                         });
                     } else {
-                        if (c.distNodes) {
-                            c.distNodes.forEach(function (n) {
-                                try { n.input.disconnect(); } catch (e) { }
-                                try { n.output.disconnect(); } catch (e) { }
-                                if (n.processors) {
-                                    n.processors.forEach(function (p) {
-                                        try { p.disconnect(); } catch (e) { }
-                                    });
-                                }
-                            });
-                        }
+                        c.distNodes && c.distNodes.forEach(function (n) { try { n.input.disconnect() } catch (e) { } try { n.output.disconnect() } catch (e) { } n.processors && n.processors.forEach(function (p) { try { p.disconnect() } catch (e) { } }) });
                         c.distNodes = [];
-                        try { c.distIn.disconnect(c.distOut); } catch (e) { }
-
-                        var current = c.distIn;
-                        for (var j = 0; j < layers.length; j++) {
+                        for (var current = c.distIn, j = 0; j < layers.length; j++) {
                             var effect = await createDistEffect(audioCtx, layers[j].type, layers[j].params || {});
-                            current.connect(effect.input);
-                            current = effect.output;
-                            c.distNodes.push(effect);
+                            current.connect(effect.input), current = effect.output, c.distNodes.push(effect);
                         }
                         current.connect(c.distOut);
                         c._lastDistLayersHash = chainHash;
                     }
-
-                    if (c.distNodes && c.distNodes.length > 0) {
-                        c.distNodes[c.distNodes.length - 1].output.gain.linearRampToValueAtTime(mix, audioCtx.currentTime + 0.02);
-                    }
+                    // Proper Dry/Wet mix
+                    if (c.distDry) c.distDry.gain.linearRampToValueAtTime(1 - mix, audioCtx.currentTime + 0.02);
+                    if (c.distNodes && c.distNodes.length > 0) c.distNodes[c.distNodes.length - 1].output.gain.linearRampToValueAtTime(mix, audioCtx.currentTime + 0.02);
                 }
             })(chain);
 
@@ -638,7 +598,7 @@
 
     let howlerProbeTimer = null, usingHowler = false, howlerAttached = false, siteIsBlacklisted = false;
     const connectedMediaElements = new Set, connectingMediaElements = new WeakSet;
-    let stereoSplitter, stereoMerger, subLeftGain, subRightGain, convolverNode, dryGainNode, wetGainNode, reverbMergeNode, stereoPannerNode, compressorNode, dolbyInputNode, dolbyOutputNode, surroundSplitter, surroundMerger, surroundCenterGain, modulationInputNode = null, modulationOutputNode = null, modulationLayersNodes = [], delayInputNode = null, delayOutputNode = null, delayNodes = null, distInputNode = null, distOutputNode = null, distNodes = null, lastDistType = null;
+    let stereoSplitter, stereoMerger, subLeftGain, subRightGain, convolverNode, dryGainNode, wetGainNode, reverbMergeNode, stereoPannerNode, compressorNode, dolbyInputNode, dolbyOutputNode, surroundSplitter, surroundMerger, surroundCenterGain, modulationInputNode = null, modulationOutputNode = null, modulationLayersNodes = [], delayInputNode = null, delayOutputNode = null, delayNodes = null, distInputNode = null, distOutputNode = null, distDryGain = null, distNodes = null, lastDistType=null;
     const convolverCache = new Map;
     let lastConfiguredBlockMs = null, lastConfiguredSmart = null, pitchUpdateRafId = null;
 
@@ -887,14 +847,15 @@
 
                 distInputNode = ctx.createGain(),
                     distOutputNode = ctx.createGain(),
+                    distDryGain = ctx.createGain(),
                     delayInputNode = ctx.createGain(),
-                    delayOutputNode = ctx.createGain(),
-                    reverbMergeNode.connect(distInputNode),
+                    delayOutputNode = ctx.createGain();
+
+                reverbMergeNode.connect(distInputNode),
+                    distInputNode.connect(distDryGain),
+                    distDryGain.connect(distOutputNode),
                     distOutputNode.connect(delayInputNode),
                     delayOutputNode.connect(compressorNode);
-
-
-
 
 
                 compressorNode.connect(gainNode);
@@ -1548,64 +1509,43 @@
         var layers = settings.distortionLayers;
         var mix = (settings.distMix || 0) / 100;
 
-        if (!layers || !layers.length || mix <= 0) {
+        if (!layers || !layers.length) {
             if (distNodes) {
-                distNodes.forEach(function (n) {
-                    try { n.input.disconnect(); } catch (e) { }
-                    try { n.output.disconnect(); } catch (e) { }
-                    if (n.processors) n.processors.forEach(function (p) { try { p.disconnect(); } catch (e) { } });
-                });
-                distNodes = null; lastDistType = null;
+                distNodes.forEach(function (n) { try { n.input.disconnect() } catch (e) { } try { n.output.disconnect() } catch (e) { } n.processors && n.processors.forEach(function (p) { try { p.disconnect() } catch (e) { } }) });
+                distNodes = null;
+                lastDistType = null;
             }
-            try { distInputNode.disconnect(distOutputNode); } catch (e) { }
-            distInputNode.connect(distOutputNode);
+            if (distDryGain) distDryGain.gain.linearRampToValueAtTime(1, audioCtx.currentTime + 0.02);
         } else {
-            var currentHash = layers.map(function (l) { return l.type; }).join("-");
+            var currentHash = layers.map(function (l) { return l.type }).join("-");
             if (currentHash !== lastDistType) {
                 if (distNodes) {
-                    distNodes.forEach(function (n) {
-                        try { n.input.disconnect(); } catch (e) { }
-                        try { n.output.disconnect(); } catch (e) { }
-                        if (n.processors) n.processors.forEach(function (p) { try { p.disconnect(); } catch (e) { } });
-                    });
-                    distNodes = null; lastDistType = null;
+                    distNodes.forEach(function (n) { try { n.input.disconnect() } catch (e) { } try { n.output.disconnect() } catch (e) { } n.processors && n.processors.forEach(function (p) { try { p.disconnect() } catch (e) { } }) });
+                    distNodes = null;
+                    lastDistType = null;
                 }
                 distNodes = [];
-                try { distInputNode.disconnect(distOutputNode); } catch (e) { }
-                var current = distInputNode;
-                for (var i = 0; i < layers.length; i++) {
+                for (var current = distInputNode, i = 0; i < layers.length; i++) {
                     var effect = await createDistEffect(audioCtx, layers[i].type, layers[i].params || {});
-                    current.connect(effect.input); current = effect.output; distNodes.push(effect);
+                    current.connect(effect.input), current = effect.output, distNodes.push(effect);
                 }
-                current.connect(distOutputNode); lastDistType = currentHash;
+                // Wet path connects to output alongside the dry path
+                current.connect(distOutputNode);
+                lastDistType = currentHash;
             } else {
                 distNodes.forEach(function (node, i) {
                     var l = layers[i];
                     if (l && node.workletNode && node.workletNode.parameters) {
                         var p = node.workletNode.parameters;
-                        if ("bitcrusher" === l.type) {
-                            if (p.has('bits')) p.get('bits').value = l.params.bits || 8;
-                            if (p.has('normRange')) p.get('normRange').value = l.params.normRange || 40;
-                        } else if ("cdskipper" === l.type) {
-                            if (p.has('loopMs')) p.get('loopMs').value = l.params.loopMs || 200;
-                            if (p.has('repeats')) p.get('repeats').value = l.params.repeats || 4;
-                        } else if ("vinyl" === l.type) {
-                            if (p.has('noise')) p.get('noise').value = (l.params.noise || 0) / 100;
-                            if (p.has('crackle')) p.get('crackle').value = (l.params.crackle || 0) / 100;
-                        }
+                        "bitcrusher" === l.type ? (p.has("bits") && (p.get("bits").value = l.params.bits || 8), p.has("normRange") && (p.get("normRange").value = l.params.normRange || 40)) : "cdskipper" === l.type ? (p.has("loopMs") && (p.get("loopMs").value = l.params.loopMs || 200), p.has("repeats") && (p.get("repeats").value = l.params.repeats || 4)) : "vinyl" === l.type && (p.has("noise") && (p.get("noise").value = (l.params.noise || 0) / 100), p.has("crackle") && (p.get("crackle").value = (l.params.crackle || 0) / 100))
                     } else if (l && node.processors) {
-                        node.processors.forEach(function (p) {
-                            if ("distortion" === l.type) {
-                                if (p.shaper) p.shaper.curve = makeDistCurve((l.params.amount || 50) / 100);
-                                if (p.tone) p.tone.frequency.value = 2000 + ((l.params.tone || 50) / 100) * 8000;
-                            }
-                        });
+                        node.processors.forEach(function (p) { "distortion" === l.type && (p.shaper && (p.shaper.curve = makeDistCurve((l.params.amount || 50) / 100)), p.tone && (p.tone.frequency.value = 2e3 + (l.params.tone || 50) / 100 * 8e3)) })
                     }
                 });
             }
-            if (distNodes && distNodes.length > 0) {
-                distNodes[distNodes.length - 1].output.gain.linearRampToValueAtTime(mix, audioCtx.currentTime + 0.02);
-            }
+            // Proper Dry/Wet mix
+            if (distDryGain) distDryGain.gain.linearRampToValueAtTime(1 - mix, audioCtx.currentTime + 0.02);
+            if (distNodes && distNodes.length > 0) distNodes[distNodes.length - 1].output.gain.linearRampToValueAtTime(mix, audioCtx.currentTime + 0.02);
         }
     }
 
