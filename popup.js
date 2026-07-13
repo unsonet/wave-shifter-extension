@@ -16,13 +16,16 @@ const simpleModal = globalThis['simpleModal'];
         speedFine: 0,
         preservePitch: true,
         blacklistPatterns: [],
-        volumeBoostDb: 0,
+        gainOutputDb: 0,
+        effectsMix: 50,
         toggleState: {
-            volumeBoost: false,
+            gainSettings: false,
             pitchSettings: true,
             speedSettings: true,
             eqSettings: false,
-            spatialSettings: false,
+            stereoSettings: false,
+            reverbSettings: false,
+            claritySettings: false,
             dynamicsSettings: false,
             surroundSettings: false,
             modulationSettings: false,
@@ -31,10 +34,10 @@ const simpleModal = globalThis['simpleModal'];
         eqPreset: "flat",
         reverbType: null,
         reverbWet: 0,
-        stereoWiden: 0,
+        centerCancel: 0,
         channelBalance: 0,
 
-        delayTime: 250, delayFeedback: 40, delayMix: 0,
+        delayTime: 250, delayFeedback: 40, delayMix: 0, definitionMix:0,
         distortionLayers: [], distMix: 0,
         compressorThreshold: -24,
         compressorKnee: 30,
@@ -116,7 +119,10 @@ const simpleModal = globalThis['simpleModal'];
     };
 
     const SECTION_DEFAULTS = {
-        '#volumeBoostPanel': { volumeBoostDb: DEFAULT_SETTINGS.volumeBoostDb },
+        '#gainPanel': {
+            gainOutputDb: DEFAULT_SETTINGS.gainOutputDb,
+            effectsMix: DEFAULT_SETTINGS.effectsMix,
+        },
         '#pitchSettingsPanel': {
             pitchValueSemitones: DEFAULT_SETTINGS.pitchValueSemitones,
             pitchValueCents: DEFAULT_SETTINGS.pitchValueCents,
@@ -133,12 +139,15 @@ const simpleModal = globalThis['simpleModal'];
             eqPreset: DEFAULT_SETTINGS.eqPreset
         },
 
-        "#spatialSettingsPanel": {
-            reverbType: DEFAULT_SETTINGS.reverbType,
-            reverbWet: DEFAULT_SETTINGS.reverbWet,
-            stereoWiden: DEFAULT_SETTINGS.stereoWiden,
+        "#stereoPanel": {
+            centerCancel: DEFAULT_SETTINGS.centerCancel,
             channelBalance: DEFAULT_SETTINGS.channelBalance
         },
+        "#reverbPanel": {
+            reverbType: DEFAULT_SETTINGS.reverbType,
+            reverbWet: DEFAULT_SETTINGS.reverbWet,
+        },
+        "#clarityPanel": { definitionMix: 0 },
         "#delayPanel": {
             delayTime: 250,
             delayFeedback: 40,
@@ -193,9 +202,11 @@ const simpleModal = globalThis['simpleModal'];
     const pitchSettingsPanel = document.getElementById("pitchSettingsPanel");
     const speedSettingsPanel = document.getElementById("speedSettingsPanel");
     const eqSettingsPanel = document.getElementById("eqSettingsPanel");
-    const volumeBoostSlider = document.getElementById("volumeBoostDb");
-    const volumeBoostVal = document.getElementById("volumeBoostVal");
-    const volumeBoostPanel = document.getElementById("volumeBoostPanel");
+    const gainOutputSlider = document.getElementById("gainOutputDb");
+    const gainOutputVal = document.getElementById("gainOutputVal");
+    const effectsMixSlider = document.getElementById("effectsMix");
+    const effectsMixVal = document.getElementById("effectsMixVal");
+    const gainPanel = document.getElementById("gainPanel");
     const eqPresetManageBtn = document.getElementById("eqPresetManageBtn");
 
     const eqPresetNameInput = document.getElementById("eqPresetNameInput");
@@ -203,15 +214,19 @@ const simpleModal = globalThis['simpleModal'];
     const eqPresetAddBtn = document.getElementById("eqPresetAddBtn");
     const eqPresetList = document.getElementById("eqPresetList");
     const optimisationDelayCheck = document.getElementById("optimisationDelay");
-    const spatialSettingsPanel = document.getElementById("spatialSettingsPanel"),
+    const stereoPanel = document.getElementById("stereoPanel"),
+        reverbPanel = document.getElementById("reverbPanel"),
         reverbPresetSelect = document.getElementById("reverbPreset"),
         reverbWetSlider = document.getElementById("reverbWet"),
         reverbWetVal = document.getElementById("reverbWetVal"),
-        stereoWidenSlider = document.getElementById("stereoWiden"),
-        stereoWidenVal = document.getElementById("stereoWidenVal"),
+        centerCancelSlider = document.getElementById("centerCancel"),
+        centerCancelVal = document.getElementById("centerCancelVal"),
         channelBalanceSlider = document.getElementById("channelBalance"),
         channelBalanceVal = document.getElementById("channelBalanceVal");
-    const delayPanel = document.getElementById("delayPanel"),
+    const clarityPanel = document.getElementById("clarityPanel"),
+        definitionMixSlider = document.getElementById("definitionMix"),
+        definitionMixVal = document.getElementById("definitionMixVal"),
+        delayPanel = document.getElementById("delayPanel"),
         delayTimeSlider = document.getElementById("delayTime"),
         delayTimeVal = document.getElementById("delayTimeVal"),
         delayFeedbackSlider = document.getElementById("delayFeedback"),
@@ -342,11 +357,12 @@ const simpleModal = globalThis['simpleModal'];
         pValues.pitchValueCents = currentSettings.pitchValueCents;
         pValues.windowSizeMilliseconds = currentSettings.windowSizeMilliseconds;
         pValues.applySmartProcessing = currentSettings.applySmartProcessing;
-        pValues.volumeBoostDb = currentSettings.volumeBoostDb;
+        pValues.gainOutputDb = currentSettings.gainOutputDb;
+        pValues.effectsMix = currentSettings.effectsMix;
         pValues.eqGains = [...currentSettings.eqGains];
         pValues.reverbType = currentSettings.reverbType;
         pValues.reverbWet = currentSettings.reverbWet;
-        pValues.stereoWiden = currentSettings.stereoWiden;
+        pValues.centerCancel = currentSettings.centerCancel;
         pValues.channelBalance = currentSettings.channelBalance;
         pValues.modulationLayers = JSON.parse(JSON.stringify(currentSettings.modulationLayers || []));
         pValues.distortionLayers = JSON.parse(JSON.stringify(currentSettings.distortionLayers || []));
@@ -907,21 +923,26 @@ const simpleModal = globalThis['simpleModal'];
         pitchSettingsPanel.open = currentSettings.toggleState?.pitchSettings ?? true;
         speedSettingsPanel.open = currentSettings.toggleState?.speedSettings ?? false;
         eqSettingsPanel.open = currentSettings.toggleState?.eqSettings ?? false;
-        volumeBoostPanel.open = currentSettings.toggleState?.volumeBoost ?? true;
+        gainPanel.open = currentSettings.toggleState?.gainSettings ?? true;
 
         eqPresetSelect.value = currentSettings.eqPreset || "flat";
-        volumeBoostSlider.value = currentSettings.volumeBoostDb;
-        volumeBoostVal.textContent = formatDb(currentSettings.volumeBoostDb);
+        gainOutputSlider.value = currentSettings.gainOutputDb;
+        gainOutputVal.textContent = formatDb(currentSettings.gainOutputDb);
+        effectsMixSlider.value = currentSettings.effectsMix;
+        effectsMixVal.textContent = currentSettings.effectsMix + "%";
 
-        spatialSettingsPanel.open = currentSettings.toggleState?.spatialSettings ?? !1,
+        stereoPanel.open = currentSettings.toggleState?.stereoSettings ?? !1,
+            reverbPanel.open = currentSettings.toggleState?.reverbSettings ?? !1,
             reverbPresetSelect.value = currentSettings.reverbType || "null",
             reverbWetSlider.value = currentSettings.reverbWet,
             reverbWetVal.textContent = currentSettings.reverbWet + "%",
-            stereoWidenSlider.value = currentSettings.stereoWiden,
-            stereoWidenVal.textContent = currentSettings.stereoWiden,
+            centerCancelSlider.value = currentSettings.centerCancel,
+            centerCancelVal.textContent = currentSettings.centerCancel,
             channelBalanceSlider.value = currentSettings.channelBalance,
             channelBalanceVal.textContent = currentSettings.channelBalance,
-
+            clarityPanel.open = currentSettings.toggleState?.claritySettings ?? !1,
+            definitionMixSlider.value = currentSettings.definitionMix,
+            definitionMixVal.textContent = currentSettings.definitionMix + "%",
             delayPanel.open = currentSettings.toggleState?.delaySettings ?? !1,
             delayTimeSlider.value = currentSettings.delayTime, delayTimeVal.textContent = currentSettings.delayTime + " ms",
             delayFeedbackSlider.value = currentSettings.delayFeedback, delayFeedbackVal.textContent = currentSettings.delayFeedback + "%",
@@ -1037,11 +1058,12 @@ const simpleModal = globalThis['simpleModal'];
 
     async function saveToggleState() {
         currentSettings.toggleState = {
-            volumeBoost: volumeBoostPanel.open,
+            gainSettings: gainPanel.open,
             pitchSettings: pitchSettingsPanel.open,
             speedSettings: speedSettingsPanel.open,
             eqSettings: eqSettingsPanel.open,
-            spatialSettings: spatialSettingsPanel.open,
+            stereoSettings: stereoPanel.open,
+            reverbSettings: reverbPanel.open,
             dynamicsSettings: dynamicsPanel.open,
             surroundSettings: surroundPanel.open,
             modulationSettings: modulationPanel.open,
@@ -1132,23 +1154,33 @@ const simpleModal = globalThis['simpleModal'];
             if (id === "blockSize") { currentSettings.windowSizeMilliseconds = val; blockSizeVal.textContent = val; }
             if (id === "speedUnits") { currentSettings.speedUnits = val; speedUnitsVal.textContent = calcSpeedPercentage(val, 0) + "%"; }
             if (id === "speedFine") { currentSettings.speedFine = val; speedFineVal.textContent = calcSpeedPercentage(currentSettings.speedUnits, val) + "%"; }
-            if (id === "volumeBoostDb") {
-                currentSettings.volumeBoostDb = val;
-                volumeBoostVal.textContent = formatDb(val);
+            if (id === "gainOutputDb") {
+                currentSettings.gainOutputDb = val;
+                gainOutputVal.textContent = formatDb(val);
+            }
+            if (id === "effectsMix") {
+                currentSettings.effectsMix = val;
+                effectsMixVal.textContent = val + "%"
             }
 
             if (id === "reverbWet") {
                 currentSettings.reverbWet = val;
                 reverbWetVal.textContent = val + "%";
             }
-            if (id === "stereoWiden") {
-                currentSettings.stereoWiden = val;
-                stereoWidenVal.textContent = val;
+            if (id === "centerCancel") {
+                currentSettings.centerCancel = val;
+                centerCancelVal.textContent = val;
             }
             if (id === "channelBalance") {
                 currentSettings.channelBalance = val;
                 channelBalanceVal.textContent = val;
             }
+
+            if (id == "definitionMix") {
+                currentSettings.definitionMix = val;
+                definitionMixVal.textContent = val + "%";
+            }
+
             if (id === "delayTime") {
                 currentSettings.delayTime = val;
                 delayTimeVal.textContent = val + " ms";
@@ -1398,7 +1430,7 @@ const simpleModal = globalThis['simpleModal'];
         }
     });
 
-    [volumeBoostPanel, pitchSettingsPanel, speedSettingsPanel, eqSettingsPanel, spatialSettingsPanel, delayPanel, distortionPanel, dynamicsPanel, surroundPanel, modulationPanel].forEach(p => p.addEventListener("toggle", saveToggleState));
+    [gainPanel, pitchSettingsPanel, speedSettingsPanel, eqSettingsPanel, stereoPanel, reverbPanel, clarityPanel, delayPanel, distortionPanel, dynamicsPanel, surroundPanel, modulationPanel].forEach(p => p.addEventListener("toggle", saveToggleState));
 
     updateUI(), renderBlacklistList(), renderEqPresetList(), renderGlobalPresetList(), updateGlobalPresetSelectUI(), renderModulationLayers(), await refreshSiteStatus()
 })();

@@ -8,17 +8,21 @@
 </head>
 
 <body>
-    <details id="volumeBoostPanel" open>
+    <details id="gainPanel" open>
         <summary>
-            <div class="summary-container">
-                <span>Volume</span>
-                <div class="reset-icon" data-section="#volumeBoostPanel"></div>
+            <div class="summary-container"><span>Gain</span>
+                <div class="reset-icon" data-section="#gainPanel"></div>
             </div>
         </summary>
-        <div class="control">
-            <label>Gain: <span id="volumeBoostVal">0 dB</span></label>
-            <div class="range-slider" style="--orientation: horizontal;">
-                <input type="range" id="volumeBoostDb" min="-24" max="24" step="0.5" value="0">
+        <div class="control"><label>Output: <span id="gainOutputVal">0 dB</span></label>
+            <div class="range-slider" style="--orientation: horizontal;"><input type="range" id="gainOutputDb" min="-24" max="24" step="0.5" value="0">
+                <div class="range-slider__track"></div>
+                <div class="range-slider__bar"></div>
+                <div class="range-slider__thumb"></div>
+            </div>
+        </div>
+        <div class="control" style="margin-top:10px;"><label>Effects Mix: <span id="effectsMixVal">100%</span></label>
+            <div class="range-slider" style="--orientation: horizontal;"><input type="range" id="effectsMix" min="0" max="100" step="1" value="100">
                 <div class="range-slider__track"></div>
                 <div class="range-slider__bar"></div>
                 <div class="range-slider__thumb"></div>
@@ -181,12 +185,10 @@
         </div>
     </details>
 
-
-    <details id="spatialSettingsPanel">
+    <details id="reverbPanel">
         <summary>
-            <div class="summary-container">
-                <span>Spatial</span>
-                <div class="reset-icon" data-section="#spatialSettingsPanel"></div>
+            <div class="summary-container"><span>Reverb</span>
+                <div class="reset-icon" data-section="#reverbPanel"></div>
             </div>
         </summary>
         <div class="control">
@@ -209,17 +211,27 @@
                 <div class="range-slider__thumb"></div>
             </div>
         </div>
+
+        </div>
+    </details>
+
+    <details id="stereoPanel">
+        <summary>
+            <div class="summary-container"><span>Stereo</span>
+                <div class="reset-icon" data-section="#stereoPanel"></div>
+            </div>
+        </summary>
         <div class="control" style="margin-top:10px;">
-            <label>Stereo Widener: <span id="stereoWidenVal">0</span></label>
+            <label>Center Cancel: <span id="centerCancelVal">0</span></label>
             <div class="range-slider" style="--orientation: horizontal;">
-                <input type="range" id="stereoWiden" min="0" max="100" step="1" value="0">
+                <input type="range" id="centerCancel" min="0" max="100" step="1" value="0">
                 <div class="range-slider__track"></div>
                 <div class="range-slider__bar"></div>
                 <div class="range-slider__thumb"></div>
             </div>
         </div>
         <div class="control" style="margin-top:10px;">
-            <label>Channel Balance: <span id="channelBalanceVal">0</span></label>
+            <label>Balance: <span id="channelBalanceVal">0</span></label>
             <div class="range-slider" style="--orientation: horizontal;">
                 <input type="range" id="channelBalance" min="-100" max="100" step="1" value="0">
                 <div class="range-slider__track"></div>
@@ -227,70 +239,98 @@
                 <div class="range-slider__thumb"></div>
             </div>
         </div>
-          </div></details>
-      
-      <details id="delayPanel">
-        <summary><div class="summary-container"><span>Delay</span><div class="reset-icon" data-section="#delayPanel"></div></div></summary>
+        </div>
+    </details>
+
+
+
+    <details id="clarityPanel">
+        <summary>
+            <div class="summary-container"><span>Clarity</span>
+                <div class="reset-icon" data-section="#clarityPanel"></div>
+            </div>
+        </summary>
+        <div class="control" style="margin-top:10px;"><label>Definition: <span id="definitionMixVal">0%</span></label>
+            <div class="range-slider" style="--orientation: horizontal;"><input type="range" id="definitionMix" min="0" max="100" step="1" value="0">
+                <div class="range-slider__track"></div>
+                <div class="range-slider__bar"></div>
+                <div class="range-slider__thumb"></div>
+            </div>
+        </div>
+    </details>
+
+    <details id="delayPanel">
+        <summary>
+            <div class="summary-container"><span>Delay</span>
+                <div class="reset-icon" data-section="#delayPanel"></div>
+            </div>
+        </summary>
         <div class="control" style="margin-top:10px;">
-          <label>Time: <span id="delayTimeVal">250 ms</span></label>
-          <div class="range-slider" style="--orientation: horizontal;">
-            <input type="range" id="delayTime" min="10" max="1000" step="1" value="250">
-            <div class="range-slider__track"></div>
-            <div class="range-slider__bar"></div>
-            <div class="range-slider__thumb"></div>
-          </div>
+            <label>Time: <span id="delayTimeVal">250 ms</span></label>
+            <div class="range-slider" style="--orientation: horizontal;">
+                <input type="range" id="delayTime" min="10" max="1000" step="1" value="250">
+                <div class="range-slider__track"></div>
+                <div class="range-slider__bar"></div>
+                <div class="range-slider__thumb"></div>
+            </div>
         </div>
         <div class="control" style="margin-top:10px;">
-          <label>Feedback: <span id="delayFeedbackVal">40%</span></label>
-          <div class="range-slider" style="--orientation: horizontal;">
-            <input type="range" id="delayFeedback" min="0" max="90" step="1" value="40">
-            <div class="range-slider__track"></div>
-            <div class="range-slider__bar"></div>
-            <div class="range-slider__thumb"></div>
-          </div>
+            <label>Feedback: <span id="delayFeedbackVal">40%</span></label>
+            <div class="range-slider" style="--orientation: horizontal;">
+                <input type="range" id="delayFeedback" min="0" max="90" step="1" value="40">
+                <div class="range-slider__track"></div>
+                <div class="range-slider__bar"></div>
+                <div class="range-slider__thumb"></div>
+            </div>
         </div>
         <div class="control" style="margin-top:10px;">
-          <label>Mix: <span id="delayMixVal">0%</span></label>
-          <div class="range-slider" style="--orientation: horizontal;">
-            <input type="range" id="delayMix" min="0" max="100" step="1" value="0">
-            <div class="range-slider__track"></div>
-            <div class="range-slider__bar"></div>
-            <div class="range-slider__thumb"></div>
-          </div>
+            <label>Mix: <span id="delayMixVal">0%</span></label>
+            <div class="range-slider" style="--orientation: horizontal;">
+                <input type="range" id="delayMix" min="0" max="100" step="1" value="0">
+                <div class="range-slider__track"></div>
+                <div class="range-slider__bar"></div>
+                <div class="range-slider__thumb"></div>
+            </div>
         </div>
-        
+
         <!-- ЗАРЕЗЕРВИРОВАНО ДЛЯ БУДУЩЕГО BPM SYNC -->
         <div class="row" style="margin-top:12px; opacity: 0.5; pointer-events: none;">
-          <input type="checkbox" id="delayBpmSync" disabled>
-          <label>Sync to BPM</label>
-          <input type="number" id="delayBpmValue" value="120" min="40" max="300" style="width: 50px; margin-left: 8px; padding: 2px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: white; border-radius: 4px;" disabled>
-          <span style="margin-left: 4px; font-size: 12px;">BPM</span>
+            <input type="checkbox" id="delayBpmSync" disabled>
+            <label>Sync to BPM</label>
+            <input type="number" id="delayBpmValue" value="120" min="40" max="300" style="width: 50px; margin-left: 8px; padding: 2px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: white; border-radius: 4px;" disabled>
+            <span style="margin-left: 4px; font-size: 12px;">BPM</span>
         </div>
-      </details>
+    </details>
 
-            <details id="distortionPanel">
-        <summary><div class="summary-container"><span>Lo-Fi</span><div class="reset-icon" data-section="#distortionPanel"></div></div></summary>
+    <details id="distortionPanel">
+        <summary>
+            <div class="summary-container"><span>Lo-Fi</span>
+                <div class="reset-icon" data-section="#distortionPanel"></div>
+            </div>
+        </summary>
         <div class="modulation-layers" style="display:flex;gap:8px;align-items:center;">
-          <select id="lofiLayer">
-            <option value="distortion">Distortion</option>
-            <option value="bitcrusher">Bitcrusher</option>
-            <option value="cdskipper">CD Skipper</option>
-            <option value="vinyl">Vinyl</option>
-          </select>
-          <button id="lofiLayerAddBtn" class="btn-vk link" type="button">Add Layer</button>
+            <select id="lofiLayer">
+                <option value="distortion">Distortion</option>
+                <option value="bitcrusher">Bitcrusher</option>
+                <option value="cdskipper">CD Skipper</option>
+                <option value="vinyl">Vinyl</option>
+            </select>
+            <button id="lofiLayerAddBtn" class="btn-vk link" type="button">Add Layer</button>
         </div>
         <div id="lofi-items" class="layers-items"></div>
-        
-        <div class="control" style="margin-top:10px;">
-          <label>Mix: <span id="distMixVal">0%</span></label>
-          <div class="range-slider" style="--orientation: horizontal;">
-            <input type="range" id="distMix" min="0" max="100" step="1" value="0">
-            <div class="range-slider__track"></div><div class="range-slider__bar"></div><div class="range-slider__thumb"></div>
-          </div>
-        </div>
-      </details>
 
-      <details id="dynamicsPanel">
+        <div class="control" style="margin-top:10px;">
+            <label>Mix: <span id="distMixVal">0%</span></label>
+            <div class="range-slider" style="--orientation: horizontal;">
+                <input type="range" id="distMix" min="0" max="100" step="1" value="0">
+                <div class="range-slider__track"></div>
+                <div class="range-slider__bar"></div>
+                <div class="range-slider__thumb"></div>
+            </div>
+        </div>
+    </details>
+
+    <details id="dynamicsPanel">
         <summary>
             <div class="summary-container"><span>Dynamics</span>
                 <div class="reset-icon" data-section="#dynamicsPanel"></div>

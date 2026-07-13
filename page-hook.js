@@ -36,13 +36,15 @@
                     pitchValueCents: 0,
                     windowSizeMilliseconds: 120,
                     applySmartProcessing: true,
-                    volumeBoostDb: 0,
+                    gainOutputDb: 0,
+                    effectsMix: 50,
                     eqGains: Array(10).fill(50),
                     reverbType: null,
                     reverbWet: 0,
-                    stereoWiden: 0,
+                    centerCancel: 0,
                     channelBalance: 0,
                     modulationLayers: []
+
                 };
 
                 const allPresets = {
@@ -205,26 +207,35 @@
                     const chainWet = audioCtx.createGain(); chainWet.gain.value = 0, chainReverbMerge = audioCtx.createGain();
                     chainMerger.connect(chainDry); chainMerger.connect(chainConvolver); chainConvolver.connect(chainWet); chainDry.connect(chainReverbMerge); chainWet.connect(chainReverbMerge);
                     const chainBalance = audioCtx.createStereoPanner(), chainGain = audioCtx.createGain();
-                    chainGain.gain.value = Math.pow(10, (pSet.volumeBoostDb || 0) / 20);
+                    chainGain.gain.value = Math.pow(10, (pSet.gainOutputDb || 0) / 20);
                     chainReverbMerge.connect(chainBalance);
 
 
 
 
-                    var chainDistIn=audioCtx.createGain();
-                    var chainDistOut=audioCtx.createGain();
-                    var chainDistDry=audioCtx.createGain();
-                    var chainDelayIn = audioCtx.createGain();
-                    var chainDelayOut = audioCtx.createGain();
-
-                    // Правильная последовательность: Dist -> Delay -> Gain
-                    chainDistIn.connect(chainDistDry);
-                    chainDistDry.connect(chainDistOut);
-                    chainDelayIn.connect(chainDelayOut);
-                    chainBalance.connect(chainDistIn);
-                    chainDistOut.connect(chainDelayIn);
-                    chainDelayOut.connect(chainGain);
-                    chainGain.connect(globalMergeNode);
+                    var chainDistIn = audioCtx.createGain(),
+                        chainDistOut = audioCtx.createGain(),
+                        chainDistDry = audioCtx.createGain(),
+                        chainDefIn = audioCtx.createGain(),
+                        chainDefOut = audioCtx.createGain(),
+                        chainDefDry = audioCtx.createGain(),
+                        chainDefHp = audioCtx.createBiquadFilter(),
+                        chainDefExciter = audioCtx.createWaveShaper(),
+                        chainDefLp = audioCtx.createBiquadFilter(),
+                        chainDefWet = audioCtx.createGain();
+                    chainDefHp.type = "highpass", chainDefHp.frequency.value = 3e3, chainDefPre.gain.value = 1, chainDefExciter.curve = makeDefCurve(), chainDefExciter.oversample = "4x", chainDefLp.type = "lowpass", chainDefLp.frequency.value = 14e3, chainDefDry.gain.value = 1, chainDefWet.gain.value = 0,
+                        chainDistIn.connect(chainDistDry),
+                        chainDistDry.connect(chainDistOut),
+                        chainDelayIn.connect(chainDelayOut),
+                        chainDelayOut.connect(chainDefIn),
+                        chainDefIn.connect(chainDefDry),
+                        chainDefDry.connect(chainDefOut),
+                        chainDefIn.connect(chainDefHp),
+                        chainDefHp.connect(chainDefExciter),
+                        chainDefExciter.connect(chainDefLp),
+                        chainDefLp.connect(chainDefWet),
+                        chainDefWet.connect(chainDefOut),
+                        chainDefOut.connect(chainGain), chainGain.connect(globalMergeNode), ovEffectsWetNode = audioCtx.createGain(), ovEffectsDryNode = audioCtx.createGain(), globalMergeNode.connect(ovEffectsWetNode), ovEffectsWetNode.connect(globalCompressorNode), sourceGain.connect(ovEffectsDryNode), ovEffectsDryNode.connect(globalCompressorNode);
 
 
 
@@ -314,10 +325,14 @@
                         delayIn: chainDelayIn,
                         delayOut: chainDelayOut,
                         delayNodes: null,
-                        distIn:chainDistIn,
-                        distOut:chainDistOut,
-                        distDry:chainDistDry,
-                        distNodes:null
+                        distIn: chainDistIn,
+                        distOut: chainDistOut,
+                        distDry: chainDistDry,
+                        distNodes: null,
+                        defIn: chainDefIn,
+                        defOut: chainDefOut,
+                        defDry: chainDefDry,
+                        defWet: chainDefWet
                     });
 
                 } catch (chainError) {
@@ -361,7 +376,9 @@
                 else { chain.correlatorNodes.freqSrc.offset.value = 1.17915 / windowSec * (1 - factor); chain.correlatorNodes.wss.offset.value = windowSec; }
             }
             const gains = pSet.eqGains || Array(10).fill(50); chain.eqs.forEach((f, i) => { f.gain.value = (gains[i] - 50) / 5; });
-            const widenVal = -(pSet.stereoWiden || 0) / 100; chain.subL.gain.value = widenVal; chain.subR.gain.value = widenVal;
+            const centerCancelVal = -(pSet.centerCancel || 0) / 100;
+            chain.subL.gain.value = centerCancelVal;
+            chain.subR.gain.value = centerCancelVal;
             // КРИТИЧЕСКИЙ ФИКС: Если тип ревербера "null", жестко глушим wet канал.
             // В некоторых браузерах ConvolverNode с buffer=null создает задержку в 1 блок (эхо).
             if (pSet.reverbType && pSet.reverbType !== "null") {
@@ -460,6 +477,10 @@
             }
         }
         refreshModulationGraph();
+        var eMixM = (settings.effectsMix || 0) / 100;
+        ovEffectsWetNode && ovEffectsWetNode.gain.linearRampToValueAtTime(eMixM, audioCtx.currentTime + .02),
+            ovEffectsDryNode && ovEffectsDryNode.gain.linearRampToValueAtTime(1 - eMixM, audioCtx.currentTime + .02);
+
 
         // Применяем Distortion и Delay для КАЖДОЙ цепи, читая ИМЕННО ИЗ ЕЁ ПРЕСЕТА
         for (let i = 0; i < parallelChains.length; i++) {
@@ -508,6 +529,7 @@
                 }
             })(chain);
 
+            (function (c) { if (c && c.defWet && c.defPre) { var m = (c.settings?.definitionMix || 0) / 100; var d = 1 + Math.pow(m, 1.5) * 3, w = Math.pow(m, 0.8) * 0.55; c.defPre.gain.linearRampToValueAtTime(d, audioCtx.currentTime + .02), c.defWet.gain.linearRampToValueAtTime(w, audioCtx.currentTime + .02) } })(chain);
             // --- Обновление Delay ---
             (function (c) {
                 if (!c || !c.delayIn) return;
@@ -598,14 +620,14 @@
 
     let howlerProbeTimer = null, usingHowler = false, howlerAttached = false, siteIsBlacklisted = false;
     const connectedMediaElements = new Set, connectingMediaElements = new WeakSet;
-    let stereoSplitter, stereoMerger, subLeftGain, subRightGain, convolverNode, dryGainNode, wetGainNode, reverbMergeNode, stereoPannerNode, compressorNode, dolbyInputNode, dolbyOutputNode, surroundSplitter, surroundMerger, surroundCenterGain, modulationInputNode = null, modulationOutputNode = null, modulationLayersNodes = [], delayInputNode = null, delayOutputNode = null, delayNodes = null, distInputNode = null, distOutputNode = null, distDryGain = null, distNodes = null, lastDistType=null;
+    let stereoSplitter, stereoMerger, subLeftGain, subRightGain, convolverNode, dryGainNode, wetGainNode, reverbMergeNode, stereoPannerNode, compressorNode, dolbyInputNode, dolbyOutputNode, surroundSplitter, surroundMerger, surroundCenterGain, modulationInputNode = null, modulationOutputNode = null, modulationLayersNodes = [], delayInputNode = null, delayOutputNode = null, delayNodes = null, distInputNode = null, distOutputNode = null, distDryGain = null, distNodes = null, lastDistType = null, defInputNode = null, defOutputNode = null, defDryGain = null, defHpFilter = null, defPreGain = null, defExciter = null, defLpFilter = null, defWetGain = null, effectsWetNode = null, effectsDryNode = null, ovEffectsWetNode = null, ovEffectsDryNode = null;
     const convolverCache = new Map;
     let lastConfiguredBlockMs = null, lastConfiguredSmart = null, pitchUpdateRafId = null;
 
     let settings = {
-        volumeBoostDb: 0, pitchValueSemitones: 0, pitchValueCents: 0, windowSizeMilliseconds: 120,
+        gainOutputDb: 0, pitchValueSemitones: 0, pitchValueCents: 0, windowSizeMilliseconds: 120,
         applySmartProcessing: true, speedUnits: 0, speedFine: 0, preservePitch: true, blacklistPatterns: [],
-        eqGains: Array(10).fill(50), reverbType: null, reverbWet: 0, stereoWiden: 0, channelBalance: 0,
+        eqGains: Array(10).fill(50), reverbType: null, reverbWet: 0, centerCancel: 0, channelBalance: 0, definitionMix: 0, effectsMix: 50,
         compressorThreshold: -24, compressorKnee: 30, compressorRatio: 12, compressorAttack: 3, compressorRelease: 250, dolbyEnabled: false
     };
 
@@ -796,7 +818,7 @@
                 try {
                     f.disconnect()
                 } catch { }
-            }), pitchNode = null, eqFilters = [], gainNode = null, limiterNode = null, isNodeReady = !1, sourceGain = null, lastConfiguredBlockMs = null, lastConfiguredSmart = null, modulationInputNode = null, modulationOutputNode = null, modulationLayersNodes = [], delayInputNode = null, delayOutputNode = null, delayNodes = null;
+            }), pitchNode = null, eqFilters = [], gainNode = null, limiterNode = null, isNodeReady = !1, sourceGain = null, lastConfiguredBlockMs = null, lastConfiguredSmart = null, modulationInputNode = null, modulationOutputNode = null, modulationLayersNodes = [], delayInputNode = null, delayOutputNode = null, distInputNode = null, distOutputNode = null, distNodes = null, defInputNode = null, defOutputNode = null, defDryGain = null, defHpFilter = null, defPreGain = null, defExciter = null, defLpFilter = null, defWetGain = null, effectsWetNode = null, effectsDryNode = null;
         }
 
         audioCtx = ctx;
@@ -818,61 +840,124 @@
             limiterNode.attack.value = 0.003; limiterNode.release.value = 0.25;
 
             try {
-                // ... (весь блок создания стерео базы, реверберации, компрессора и долби из твоего оригинального кода) ...
-                stereoSplitter = ctx.createChannelSplitter(2); stereoMerger = ctx.createChannelMerger(2);
+                // --- СТЕРЕО БАЗА ---
+                stereoSplitter = ctx.createChannelSplitter(2);
+                stereoMerger = ctx.createChannelMerger(2);
                 subLeftGain = ctx.createGain(); subLeftGain.gain.value = 0;
                 subRightGain = ctx.createGain(); subRightGain.gain.value = 0;
                 let directLeft = ctx.createGain(); directLeft.gain.value = 1;
                 let directRight = ctx.createGain(); directRight.gain.value = 1;
 
                 eqFilters[eqFilters.length - 1].connect(stereoSplitter);
-                stereoSplitter.connect(directLeft, 0); stereoSplitter.connect(subRightGain, 1);
-                directLeft.connect(stereoMerger, 0, 0); subRightGain.connect(stereoMerger, 0, 0);
-                stereoSplitter.connect(directRight, 1); stereoSplitter.connect(subLeftGain, 0);
-                directRight.connect(stereoMerger, 0, 1); subLeftGain.connect(stereoMerger, 0, 1);
+                stereoSplitter.connect(directLeft, 0);
+                stereoSplitter.connect(subRightGain, 1);
+                directLeft.connect(stereoMerger, 0, 0);
+                subRightGain.connect(stereoMerger, 0, 0);
+                stereoSplitter.connect(directRight, 1);
+                stereoSplitter.connect(subLeftGain, 0);
+                directRight.connect(stereoMerger, 0, 1);
+                subLeftGain.connect(stereoMerger, 0, 1);
 
-                convolverNode = ctx.createConvolver(); dryGainNode = ctx.createGain(); dryGainNode.gain.value = 1;
-                wetGainNode = ctx.createGain(); wetGainNode.gain.value = 0; reverbMergeNode = ctx.createGain();
-                stereoMerger.connect(dryGainNode); stereoMerger.connect(convolverNode);
-                convolverNode.connect(wetGainNode); dryGainNode.connect(reverbMergeNode); wetGainNode.connect(reverbMergeNode);
+                // --- РЕВЕРБЕРАТОР ---
+                convolverNode = ctx.createConvolver();
+                dryGainNode = ctx.createGain(); dryGainNode.gain.value = 1;
+                wetGainNode = ctx.createGain(); wetGainNode.gain.value = 0;
+                reverbMergeNode = ctx.createGain();
 
-                compressorNode = ctx.createDynamicsCompressor(); stereoPannerNode = ctx.createStereoPanner();
-                limiterNode = ctx.createDynamicsCompressor(); // пересоздаем с правильными параметрами
+                stereoMerger.connect(dryGainNode);
+                stereoMerger.connect(convolverNode);
+                convolverNode.connect(wetGainNode);
+                dryGainNode.connect(reverbMergeNode);
+                wetGainNode.connect(reverbMergeNode);
+
+                // --- МАСТЕР УЗЛЫ ---
+                compressorNode = ctx.createDynamicsCompressor();
+                stereoPannerNode = ctx.createStereoPanner();
+                limiterNode = ctx.createDynamicsCompressor();
                 limiterNode.threshold.value = -1; limiterNode.knee.value = 0; limiterNode.ratio.value = 20;
                 limiterNode.attack.value = 0.003; limiterNode.release.value = 0.25;
 
-                dolbyInputNode = ctx.createGain(); dolbyOutputNode = ctx.createGain();
-                surroundSplitter = ctx.createChannelSplitter(2); surroundMerger = ctx.createChannelMerger(6);
+                // --- DOLBY ---
+                dolbyInputNode = ctx.createGain();
+                dolbyOutputNode = ctx.createGain();
+                surroundSplitter = ctx.createChannelSplitter(2);
+                surroundMerger = ctx.createChannelMerger(6);
                 surroundCenterGain = ctx.createGain(); surroundCenterGain.gain.value = 0.2;
 
-                distInputNode = ctx.createGain(),
-                    distOutputNode = ctx.createGain(),
-                    distDryGain = ctx.createGain(),
-                    delayInputNode = ctx.createGain(),
-                    delayOutputNode = ctx.createGain();
+                // --- УЗЛЫ ЭФФЕКТОВ (LO-FI, DELAY, DEFINITION) ---
+                distInputNode = ctx.createGain();
+                distOutputNode = ctx.createGain();
+                distDryGain = ctx.createGain();
+                delayInputNode = ctx.createGain();
+                delayOutputNode = ctx.createGain();
+                defInputNode = ctx.createGain();
+                defOutputNode = ctx.createGain();
+                defDryGain = ctx.createGain();
+                defHpFilter = ctx.createBiquadFilter();
+                defPreGain = ctx.createGain();
+                defExciter = ctx.createWaveShaper();
+                defLpFilter = ctx.createBiquadFilter();
+                defWetGain = ctx.createGain();
 
-                reverbMergeNode.connect(distInputNode),
-                    distInputNode.connect(distDryGain),
-                    distDryGain.connect(distOutputNode),
-                    distOutputNode.connect(delayInputNode),
-                    delayOutputNode.connect(compressorNode);
+                defHpFilter.type = "highpass"; defHpFilter.frequency.value = 3e3;
+                defPreGain.gain.value = 1;
+                defExciter.curve = makeDefCurve(); defExciter.oversample = "4x";
+                defLpFilter.type = "lowpass"; defLpFilter.frequency.value = 14e3;
+                defDryGain.gain.value = 1; defWetGain.gain.value = 0;
 
+                // --- WET PATH (Сигнал идет через все эффекты) ---
+                reverbMergeNode.connect(distInputNode);
+                distInputNode.connect(distDryGain);
+                distDryGain.connect(distOutputNode);
+                distOutputNode.connect(delayInputNode);
+                delayInputNode.connect(delayOutputNode);
+                delayOutputNode.connect(defInputNode);
+                defInputNode.connect(defDryGain);
+                defDryGain.connect(defOutputNode);
+                defInputNode.connect(defHpFilter);
+                defHpFilter.connect(defPreGain);
+                defPreGain.connect(defExciter);
+                defExciter.connect(defLpFilter);
+                defLpFilter.connect(defWetGain);
+                defWetGain.connect(defOutputNode);
 
+                // --- ТОЧКА СМЕШИВАНИЯ EFFECTS MIX ---
+                effectsWetNode = ctx.createGain();
+                effectsDryNode = ctx.createGain();
+
+                defOutputNode.connect(effectsWetNode);
+                effectsWetNode.connect(compressorNode);
+
+                // --- DRY PATH (Чистый сигнал в обход ВСЕХ эффектов) ---
+                stereoMerger.connect(effectsDryNode);
+                effectsDryNode.connect(compressorNode);
+
+                // --- ВЫХОД ---
                 compressorNode.connect(gainNode);
-                gainNode.connect(stereoPannerNode); stereoPannerNode.connect(limiterNode); limiterNode.connect(ctx.destination);
+                gainNode.connect(stereoPannerNode);
+                stereoPannerNode.connect(limiterNode);
+                limiterNode.connect(ctx.destination);
 
+                // --- ВНУТРЕННЯЯ МАРШРУТИЗАЦИЯ DOLBY ---
                 dolbyInputNode.connect(surroundSplitter);
-                surroundSplitter.connect(surroundMerger, 0, 0); surroundSplitter.connect(surroundMerger, 1, 1);
-                surroundSplitter.connect(surroundCenterGain, 0); surroundCenterGain.connect(surroundMerger, 0, 2);
-                surroundSplitter.connect(surroundMerger, 0, 3); surroundSplitter.connect(surroundMerger, 0, 4);
-                surroundSplitter.connect(surroundMerger, 1, 5); surroundMerger.connect(dolbyOutputNode);
+                surroundSplitter.connect(surroundMerger, 0, 0);
+                surroundSplitter.connect(surroundMerger, 1, 1);
+                surroundSplitter.connect(surroundCenterGain, 0);
+                surroundCenterGain.connect(surroundMerger, 0, 2);
+                surroundSplitter.connect(surroundMerger, 0, 3);
+                surroundSplitter.connect(surroundMerger, 0, 4);
+                surroundSplitter.connect(surroundMerger, 1, 5);
+                surroundMerger.connect(dolbyOutputNode);
+
             } catch (e) {
                 console.error("[WS] Graph failed, safe bypass:", e);
                 gainNode = ctx.createGain();
                 limiterNode = ctx.createDynamicsCompressor();
                 limiterNode.threshold.value = -1; limiterNode.knee.value = 0; limiterNode.ratio.value = 20;
                 limiterNode.attack.value = 0.003; limiterNode.release.value = 0.25;
-                eqFilters[eqFilters.length - 1].connect(gainNode); gainNode.connect(limiterNode); limiterNode.connect(ctx.destination);
+                eqFilters[eqFilters.length - 1].connect(gainNode);
+                gainNode.connect(limiterNode);
+                limiterNode.connect(ctx.destination);
             }
 
             const cspBlocksWasm = await isWasmBlockedByCSP();
@@ -939,9 +1024,9 @@
         }).catch(e => console.error("[WS] Reverb load failed", e));
     }
 
-    function refreshStereoWiden() {
+    function refreshCenterCancel() {
         if (!subLeftGain) return;
-        const val = -(settings.stereoWiden || 0) / 100;
+        const val = -(settings.centerCancel || 0) / 100;
         subLeftGain.gain.value = val; subRightGain.gain.value = val;
     }
 
@@ -983,7 +1068,7 @@
 
     function refreshGainNode() {
         if (!gainNode) return;
-        const db = settings.volumeBoostDb || 0;
+        const db = settings.gainOutputDb || 0;
         gainNode.gain.value = Math.pow(10, db / 20);
     }
 
@@ -1438,6 +1523,8 @@
     }
 
 
+    function makeDefCurve() { const curve = new Float32Array(44100); for (let i = 0; i < 44100; i++) { const x = 2 * i / 44100 - 1; curve[i] = Math.tanh(x * 2) } return curve }
+
     function makeDistCurve(amount) {
         var k = amount * 100, samples = 44100, curve = new Float32Array(samples);
         for (var i = 0; i < samples; i++) { var x = i * 2 / samples - 1; if (amount < 0.3) curve[i] = Math.tanh(x * (1 + k)); else if (amount < 0.7) curve[i] = (Math.PI + k) * x / (Math.PI + k * Math.abs(x)); else curve[i] = Math.max(-0.8, Math.min(0.8, (Math.PI + k) * x / (Math.PI + k * Math.abs(x)))) } return curve;
@@ -1549,6 +1636,19 @@
         }
     }
 
+    function refreshEffectsMix() {
+        var m = (settings.effectsMix || 0) / 100;
+        effectsWetNode && effectsWetNode.gain.linearRampToValueAtTime(m, audioCtx.currentTime + .02), effectsDryNode && effectsDryNode.gain.linearRampToValueAtTime(1 - m, audioCtx.currentTime + .02)
+    }
+
+    function refreshDefinitionGraph() {
+        if (audioCtx && defInputNode && defOutputNode) {
+            var m = (settings.definitionMix || 0) / 100,
+                d = 1 + Math.pow(m, 1.5) * 3,
+                w = .55 * Math.pow(m, .8);
+            defPreGain && defPreGain.gain.linearRampToValueAtTime(d, audioCtx.currentTime + .02), defWetGain && defWetGain.gain.linearRampToValueAtTime(w, audioCtx.currentTime + .02)
+        }
+    }
     function refreshDelayGraph() {
         if (audioCtx && delayInputNode && delayOutputNode) {
             var t = (settings.delayTime || 250) / 1e3,
@@ -1685,14 +1785,19 @@
 
     function refreshAllNodes() {
         if (siteIsBlacklisted) return;
+        refreshEffectsMix();
         refreshPitchNode();
         refreshEqualizer();
         refreshGainNode();
         refreshReverb();
-        refreshStereoWiden();
+        refreshCenterCancel();
         refreshChannelBalance();
         refreshCompressor();
-        refreshDolby(), refreshModulationGraph(), refreshDistGraph(), refreshDelayGraph();
+        refreshDolby(),
+            refreshModulationGraph(),
+            refreshDistGraph(),
+            refreshDelayGraph();
+        refreshDefinitionGraph();
     }
 
     function applySpeedSettings(mediaEl) {

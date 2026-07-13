@@ -110,49 +110,56 @@
   // Решаем пресеты для первичной загрузки (чтобы оверлей работал сразу)
   let initialOverlayPresets = null;
 
-if (
-    pitchSettings.overlayEnabled && 
-    Array.isArray(pitchSettings.overlayPresets) && 
+  if (
+    pitchSettings.overlayEnabled &&
+    Array.isArray(pitchSettings.overlayPresets) &&
     pitchSettings.overlayPresets.length > 0
-) {
+  ) {
     // Чистый базовый пресет (только те настройки, которые использует аудио-граф оверлея)
     const defaultPresetValues = {
-        pitchValueSemitones: 0,
-        pitchValueCents: 0,
-        windowSizeMilliseconds: 120,
-        applySmartProcessing: true,
-        volumeBoostDb: 0,
-        eqGains: Array(10).fill(50),
-        reverbType: null,
-        reverbWet: 0,
-        stereoWiden: 0,
-        channelBalance: 0,
-        modulationLayers:[],distortionLayers:[],distMix:0,delayTime:250,delayFeedback:40,delayMix:0
+      pitchValueSemitones: 0,
+      pitchValueCents: 0,
+      windowSizeMilliseconds: 120,
+      applySmartProcessing: true,
+      gainOutputDb: 0,
+      gainInputDb: 0,
+      eqGains: Array(10).fill(50),
+      reverbType: null,
+      reverbWet: 0,
+      centerCancel: 0,
+      channelBalance: 0,
+      modulationLayers: [],
+      distortionLayers: [],
+      distMix: 0,
+      delayTime: 250,
+      delayFeedback: 40,
+      delayMix: 0,
+      definitionMix: 0
     };
 
     const allPresets = {
-        default: { values: defaultPresetValues },
-        ...(pitchSettings.globalPresets || {})
+      default: { values: defaultPresetValues },
+      ...(pitchSettings.globalPresets || {})
     };
 
     const rawPresets = [...new Set(pitchSettings.overlayPresets)].map(id => {
-        const pValues = allPresets[id]?.values || {};
-        return {
-            id: id,
-            values: { ...defaultPresetValues, ...pValues }
-        };
+      const pValues = allPresets[id]?.values || {};
+      return {
+        id: id,
+        values: { ...defaultPresetValues, ...pValues }
+      };
     });
 
     const seen = new Set;
     const unique = rawPresets.filter(p => {
-        const hash = JSON.stringify(p.values);
-        if (seen.has(hash)) return false;
-        seen.add(hash);
-        return true;
+      const hash = JSON.stringify(p.values);
+      if (seen.has(hash)) return false;
+      seen.add(hash);
+      return true;
     });
 
     if (unique.length > 0) {
-        initialOverlayPresets = unique.slice(0, 10);
+      initialOverlayPresets = unique.slice(0, 10);
     }
 
   }
