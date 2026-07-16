@@ -25,6 +25,7 @@ const simpleModal = globalThis['simpleModal'];
             eqSettings: false,
             stereoSettings: false,
             reverbSettings: false,
+            bassSettings: false,
             claritySettings: false,
             dynamicsSettings: false,
             surroundSettings: false,
@@ -32,12 +33,9 @@ const simpleModal = globalThis['simpleModal'];
         },
         eqGains: Array(10).fill(50),
         eqPreset: "flat",
-        reverbType: null,
-        reverbWet: 0,
-        centerCancel: 0,
-        channelBalance: 0,
-
-        delayTime: 250, delayFeedback: 40, delayMix: 0, definitionMix:0,
+        reverbType: null, reverbWet: 0, centerCancel: 0, channelBalance: 0,
+        stereoWidthMix: 0, stereoCenterMix: 0, stereoFocusMix: 0,
+        delayTime: 250, delayFeedback: 40, delayMix: 0, definitionMix: 0, subbassMix: 0, warmthMix: 0,
         distortionLayers: [], distMix: 0,
         compressorThreshold: -24,
         compressorKnee: 30,
@@ -141,12 +139,16 @@ const simpleModal = globalThis['simpleModal'];
 
         "#stereoPanel": {
             centerCancel: DEFAULT_SETTINGS.centerCancel,
-            channelBalance: DEFAULT_SETTINGS.channelBalance
+            channelBalance: DEFAULT_SETTINGS.channelBalance,
+            stereoWidthMix: DEFAULT_SETTINGS.stereoWidthMix,
+            stereoCenterMix: DEFAULT_SETTINGS.stereoCenterMix,
+            stereoFocusMix: DEFAULT_SETTINGS.stereoFocusMix
         },
         "#reverbPanel": {
             reverbType: DEFAULT_SETTINGS.reverbType,
             reverbWet: DEFAULT_SETTINGS.reverbWet,
         },
+        "#bassPanel": { subbassMix: 0, warmthMix: 0 },
         "#clarityPanel": { definitionMix: 0 },
         "#delayPanel": {
             delayTime: 250,
@@ -222,8 +224,19 @@ const simpleModal = globalThis['simpleModal'];
         centerCancelSlider = document.getElementById("centerCancel"),
         centerCancelVal = document.getElementById("centerCancelVal"),
         channelBalanceSlider = document.getElementById("channelBalance"),
-        channelBalanceVal = document.getElementById("channelBalanceVal");
-    const clarityPanel = document.getElementById("clarityPanel"),
+        channelBalanceVal = document.getElementById("channelBalanceVal"),
+        stereoWidthMixSlider = document.getElementById("stereoWidthMix"),
+        stereoWidthMixVal = document.getElementById("stereoWidthMixVal"),
+        stereoCenterMixSlider = document.getElementById("stereoCenterMix"),
+        stereoCenterMixVal = document.getElementById("stereoCenterMixVal"),
+        stereoFocusMixSlider = document.getElementById("stereoFocusMix"),
+        stereoFocusMixVal = document.getElementById("stereoFocusMixVal"),
+        bassPanel = document.getElementById("bassPanel"),
+        subbassMixSlider = document.getElementById("subbassMix"),
+        subbassMixVal = document.getElementById("subbassMixVal"),
+        warmthMixSlider = document.getElementById("warmthMix"),
+        warmthMixVal = document.getElementById("warmthMixVal"),
+        clarityPanel = document.getElementById("clarityPanel"),
         definitionMixSlider = document.getElementById("definitionMix"),
         definitionMixVal = document.getElementById("definitionMixVal"),
         delayPanel = document.getElementById("delayPanel"),
@@ -940,6 +953,17 @@ const simpleModal = globalThis['simpleModal'];
             centerCancelVal.textContent = currentSettings.centerCancel,
             channelBalanceSlider.value = currentSettings.channelBalance,
             channelBalanceVal.textContent = currentSettings.channelBalance,
+            stereoWidthMixSlider.value = currentSettings.stereoWidthMix,
+            stereoWidthMixVal.textContent = currentSettings.stereoWidthMix + "%",
+            stereoCenterMixSlider.value = currentSettings.stereoCenterMix,
+            stereoCenterMixVal.textContent = currentSettings.stereoCenterMix + "%",
+            stereoFocusMixSlider.value = currentSettings.stereoFocusMix,
+            stereoFocusMixVal.textContent = currentSettings.stereoFocusMix + "%",
+            bassPanel.open = currentSettings.toggleState?.bassSettings ?? !1,
+            subbassMixSlider.value = currentSettings.subbassMix,
+            subbassMixVal.textContent = currentSettings.subbassMix + "%",
+            warmthMixSlider.value = currentSettings.warmthMix,
+            warmthMixVal.textContent = currentSettings.warmthMix + "%",
             clarityPanel.open = currentSettings.toggleState?.claritySettings ?? !1,
             definitionMixSlider.value = currentSettings.definitionMix,
             definitionMixVal.textContent = currentSettings.definitionMix + "%",
@@ -1064,6 +1088,8 @@ const simpleModal = globalThis['simpleModal'];
             eqSettings: eqSettingsPanel.open,
             stereoSettings: stereoPanel.open,
             reverbSettings: reverbPanel.open,
+            claritySettings: clarityPanel.open,
+            bassSettings: bassPanel.open,
             dynamicsSettings: dynamicsPanel.open,
             surroundSettings: surroundPanel.open,
             modulationSettings: modulationPanel.open,
@@ -1176,10 +1202,26 @@ const simpleModal = globalThis['simpleModal'];
                 channelBalanceVal.textContent = val;
             }
 
+
+            if (id === "stereoWidthMix") { currentSettings.stereoWidthMix = val, stereoWidthMixVal.textContent = val + "%" }
+            if (id === "stereoCenterMix") { currentSettings.stereoCenterMix = val, stereoCenterMixVal.textContent = val + "%" }
+            if (id === "stereoFocusMix") { currentSettings.stereoFocusMix = val, stereoFocusMixVal.textContent = val + "%" }
+
             if (id == "definitionMix") {
                 currentSettings.definitionMix = val;
                 definitionMixVal.textContent = val + "%";
             }
+
+            if ("subbassMix" === id) {
+                currentSettings.subbassMix = val, subbassMixVal.textContent = val + "%"
+            }
+            if ("warmthMix" === id) {
+                currentSettings.warmthMix = val, warmthMixVal.textContent = val + "%"
+            }
+            if ("definitionMix" === id) {
+                currentSettings.definitionMix = val, definitionMixVal.textContent = val + "%"
+            }
+
 
             if (id === "delayTime") {
                 currentSettings.delayTime = val;
@@ -1430,7 +1472,7 @@ const simpleModal = globalThis['simpleModal'];
         }
     });
 
-    [gainPanel, pitchSettingsPanel, speedSettingsPanel, eqSettingsPanel, stereoPanel, reverbPanel, clarityPanel, delayPanel, distortionPanel, dynamicsPanel, surroundPanel, modulationPanel].forEach(p => p.addEventListener("toggle", saveToggleState));
+    [gainPanel, pitchSettingsPanel, speedSettingsPanel, eqSettingsPanel, stereoPanel, reverbPanel, bassPanel, clarityPanel, delayPanel, distortionPanel, dynamicsPanel, surroundPanel, modulationPanel].forEach(p => p.addEventListener("toggle", saveToggleState));
 
     updateUI(), renderBlacklistList(), renderEqPresetList(), renderGlobalPresetList(), updateGlobalPresetSelectUI(), renderModulationLayers(), await refreshSiteStatus()
 })();

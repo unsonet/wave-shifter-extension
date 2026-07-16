@@ -215,12 +215,24 @@
         </div>
     </details>
 
+    <!-- Стало -->
     <details id="stereoPanel">
         <summary>
             <div class="summary-container"><span>Stereo</span>
                 <div class="reset-icon" data-section="#stereoPanel"></div>
             </div>
         </summary>
+
+        <div class="control" style="margin-top:10px;">
+            <label>Width: <span id="stereoWidthMixVal">0%</span></label>
+            <div class="range-slider" style="--orientation: horizontal;">
+                <input type="range" id="stereoWidthMix" min="0" max="100" step="1" value="0">
+                <div class="range-slider__track"></div>
+                <div class="range-slider__bar"></div>
+                <div class="range-slider__thumb"></div>
+            </div>
+        </div>
+
         <div class="control" style="margin-top:10px;">
             <label>Center Cancel: <span id="centerCancelVal">0</span></label>
             <div class="range-slider" style="--orientation: horizontal;">
@@ -230,6 +242,27 @@
                 <div class="range-slider__thumb"></div>
             </div>
         </div>
+
+        <div class="control" style="margin-top:10px;">
+            <label>Center: <span id="stereoCenterMixVal">0%</span></label>
+            <div class="range-slider" style="--orientation: horizontal;">
+                <input type="range" id="stereoCenterMix" min="0" max="100" step="1" value="0">
+                <div class="range-slider__track"></div>
+                <div class="range-slider__bar"></div>
+                <div class="range-slider__thumb"></div>
+            </div>
+        </div>
+
+        <div class="control" style="margin-top:10px;">
+            <label>Focus: <span id="stereoFocusMixVal">0%</span></label>
+            <div class="range-slider" style="--orientation: horizontal;">
+                <input type="range" id="stereoFocusMix" min="0" max="100" step="1" value="0">
+                <div class="range-slider__track"></div>
+                <div class="range-slider__bar"></div>
+                <div class="range-slider__thumb"></div>
+            </div>
+        </div>
+
         <div class="control" style="margin-top:10px;">
             <label>Balance: <span id="channelBalanceVal">0</span></label>
             <div class="range-slider" style="--orientation: horizontal;">
@@ -239,10 +272,29 @@
                 <div class="range-slider__thumb"></div>
             </div>
         </div>
-        </div>
     </details>
 
-
+    <details id="bassPanel">
+        <summary>
+            <div class="summary-container"><span>Bass</span>
+                <div class="reset-icon" data-section="#bassPanel"></div>
+            </div>
+        </summary>
+        <div class="control" style="margin-top:10px;"><label>Subbass: <span id="subbassMixVal">0%</span></label>
+            <div class="range-slider" style="--orientation: horizontal;"><input type="range" id="subbassMix" min="0" max="100" step="1" value="0">
+                <div class="range-slider__track"></div>
+                <div class="range-slider__bar"></div>
+                <div class="range-slider__thumb"></div>
+            </div>
+        </div>
+        <div class="control" style="margin-top:10px;"><label>Warmth: <span id="warmthMixVal">0%</span></label>
+            <div class="range-slider" style="--orientation: horizontal;"><input type="range" id="warmthMix" min="0" max="100" step="1" value="0">
+                <div class="range-slider__track"></div>
+                <div class="range-slider__bar"></div>
+                <div class="range-slider__thumb"></div>
+            </div>
+        </div>
+    </details>
 
     <details id="clarityPanel">
         <summary>
