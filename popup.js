@@ -5,7 +5,8 @@ const simpleModal = globalThis['simpleModal'];
         MAX_OVERLAY_CHAINS: 10,
         MAX_SIGNALSMITH_CHAINS: 2
     };
-    let userDisabledCustomInOverlay = false;
+    let userDisabledCustomInOverlay = !1;
+    let suppressCustomSync = !1;
 
     const DEFAULT_SETTINGS = {
         pitchValueSemitones: 0,
@@ -322,6 +323,29 @@ const simpleModal = globalThis['simpleModal'];
     let applyTimeout = null;
 
     function syncUIToActivePresets() {
+        if (isOverlayActive()) {
+            const activeIds = currentSettings.overlayPresets || [],
+                allPresets = getAllGlobalPresets();
+            activeIds.forEach(pId => {
+                if (!currentSettings.globalPresets) currentSettings.globalPresets = {};
+                if (!currentSettings.globalPresets[pId]) {
+                    const src = allPresets[pId];
+                    currentSettings.globalPresets[pId] = {
+                        name: src?.name || pId,
+                        values: {
+                            ...DEFAULT_SETTINGS,
+                            ...src?.values || {}
+                        }
+                    }
+                }
+                if (!currentSettings.globalPresets[pId].values) currentSettings.globalPresets[pId].values = {};
+                //currentSettings.globalPresets[pId].values.gainOutputDb = currentSettings.gainOutputDb
+            })
+        }
+        if (suppressCustomSync) {
+            suppressCustomSync = !1;
+            return void updateGlobalPresetSelectUI();
+        }
         if (currentSettings.modulationLayers === undefined) currentSettings.modulationLayers = [];
         if (currentSettings.distortionLayers === undefined) currentSettings.distortionLayers = [];
         if (currentSettings.distMix == null) currentSettings.distMix = 0;
@@ -347,7 +371,7 @@ const simpleModal = globalThis['simpleModal'];
             }
 
             // 2. Убираем из активных цепей overlay
-            if (isOverlayActive() && currentSettings.overlayPresets?.includes("custom")) {
+            if (!isOverlayActive() && currentSettings.overlayPresets?.includes("custom")) {
                 currentSettings.overlayPresets = currentSettings.overlayPresets.filter(id => "custom" !== id);
             }
 
@@ -384,6 +408,14 @@ const simpleModal = globalThis['simpleModal'];
         pValues.delayFeedback = currentSettings.delayFeedback || 40;
         pValues.delayMix = currentSettings.delayMix || 0;
 
+        pValues.delayMix = currentSettings.delayMix || 0,
+            pValues.subbassMix = currentSettings.subbassMix || 0,
+            pValues.warmthMix = currentSettings.warmthMix || 0,
+            pValues.stereoWidthMix = currentSettings.stereoWidthMix || 0,
+            pValues.stereoCenterMix = currentSettings.stereoCenterMix || 0,
+            pValues.stereoFocusMix = currentSettings.stereoFocusMix || 0,
+            pValues.definitionMix = currentSettings.definitionMix || 0;
+
         if (isOverlayActive()) {
             if (!userDisabledCustomInOverlay && !currentSettings.overlayPresets.includes("custom")) {
                 currentSettings.overlayPresets.push("custom");
@@ -410,6 +442,9 @@ const simpleModal = globalThis['simpleModal'];
     function getAllGlobalPresets() {
         const all = { default: { name: "Default", values: { ...DEFAULT_SETTINGS } }, ...currentSettings.globalPresets || {} };
 
+        if (all.default && all.default.values) {
+            all.default.values = { ...DEFAULT_SETTINGS, ...all.default.values }
+        }
         // Скрываем "призрачный" custom из списка, если его настройки дефолтные
         if (all.custom && all.custom.values) {
             let isCustomDefault = true;
@@ -424,8 +459,10 @@ const simpleModal = globalThis['simpleModal'];
                         break;
                     }
                 }
+
             }
-            if (isCustomDefault) {
+
+            if (isCustomDefault && !(isOverlayActive() && (currentSettings.overlayPresets || []).includes("custom"))) {
                 delete all.custom; // Удаляем только из отрисовки, чтобы не моргало
             }
         }
@@ -436,38 +473,11 @@ const simpleModal = globalThis['simpleModal'];
     function getActiveOverlayPresets() {
         if (!isOverlayActive()) return null;
         let selectedIds = Array.from(globalPresetSelect.selectedOptions).map(o => o.value).filter(Boolean);
-        if (selectedIds.length === 0) {
-            selectedIds = currentSettings.overlayPresets || ["default"];
-        }
-        const all = getAllGlobalPresets();
-        const rawPresets = selectedIds.map(id => {
-            const presetValues = all[id]?.values || {};
-            return {
-                id: id,
-                values: { ...DEFAULT_SETTINGS, ...presetValues }
-            };
-        });
-
-        // Дедупликация: не грузим CPU идентичными цепями, если юзер выбрал 2 одинаковых пресета
-        const seenSettings = new Set();
-        const uniquePresets = rawPresets.filter(preset => {
-            // Очищаем от служебного мусора перед сравнением
-            const cleanValues = { ...preset.values };
-            delete cleanValues.blacklistPatterns;
-            delete cleanValues.toggleState;
-            delete cleanValues.eqPresets;
-            delete cleanValues.globalPresets;
-            delete cleanValues.overlayPresets;
-            delete cleanValues.overlayEnabled;
-            delete cleanValues.optimisationDelay;
-
-            const settingsHash = JSON.stringify(cleanValues);
-            if (seenSettings.has(settingsHash)) return false;
-            seenSettings.add(settingsHash);
-            return true;
-        });
-
-        return uniquePresets.slice(0, OVERLAY_CONFIG.MAX_OVERLAY_CHAINS);
+        0 === selectedIds.length && (selectedIds = currentSettings.overlayPresets || ["default"]);
+        const all = getAllGlobalPresets(), seenIds = new Set;
+        return selectedIds.filter(id => !seenIds.has(id) && (seenIds.add(id), !0)).map(id => {
+            const presetValues = all[id]?.values || {}; return { id, values: { ...DEFAULT_SETTINGS, ...presetValues } }
+        }).slice(0, OVERLAY_CONFIG.MAX_OVERLAY_CHAINS)
     }
 
     function switchToCustomIfNeeded() {
@@ -1180,10 +1190,22 @@ const simpleModal = globalThis['simpleModal'];
             if (id === "blockSize") { currentSettings.windowSizeMilliseconds = val; blockSizeVal.textContent = val; }
             if (id === "speedUnits") { currentSettings.speedUnits = val; speedUnitsVal.textContent = calcSpeedPercentage(val, 0) + "%"; }
             if (id === "speedFine") { currentSettings.speedFine = val; speedFineVal.textContent = calcSpeedPercentage(currentSettings.speedUnits, val) + "%"; }
-            if (id === "gainOutputDb") {
+            if ("gainOutputDb" === id) {
                 currentSettings.gainOutputDb = val;
                 gainOutputVal.textContent = formatDb(val);
+                if (isOverlayActive()) {
+                    const selectedOptions = Array.from(globalPresetSelect.selectedOptions);
+                    if (selectedOptions.length > 0) {
+                        const lastOption = selectedOptions[selectedOptions.length - 1];
+                        const presetId = lastOption.value;
+                        if (currentSettings.globalPresets[presetId]) {
+                            currentSettings.globalPresets[presetId].values.gainOutputDb = val;
+                        }
+                    }
+                }
             }
+
+
             if (id === "effectsMix") {
                 currentSettings.effectsMix = val;
                 effectsMixVal.textContent = val + "%"
@@ -1412,12 +1434,24 @@ const simpleModal = globalThis['simpleModal'];
     globalPresetSelect.addEventListener("change", e => {
         if (isOverlayActive()) {
             const newIds = Array.from(globalPresetSelect.selectedOptions).map(o => o.value);
+            const previouslyHadCustom = (currentSettings.overlayPresets || []).includes("custom");
+            const nowHasCustom = newIds.includes("custom");
+            previouslyHadCustom && !nowHasCustom && (userDisabledCustomInOverlay = true);
+            nowHasCustom && (userDisabledCustomInOverlay = false);
             currentSettings.overlayPresets = newIds;
-            // Запоминаем намерение юзера
-            if (!newIds.includes("custom")) {
-                userDisabledCustomInOverlay = true; // Юзер сам снял
+
+            if (newIds.length === 1) {
+                applyGlobalPresetToUI(newIds[0]);
             } else {
-                userDisabledCustomInOverlay = false; // Юзер поставил обратно
+                // Показываем громкость последнего выбранного пресета
+                const lastId = newIds[newIds.length - 1];
+                const preset = currentSettings.globalPresets[lastId];
+                if (preset && preset.values.gainOutputDb !== undefined) {
+                    const gain = preset.values.gainOutputDb;
+                    currentSettings.gainOutputDb = gain;
+                    gainOutputSlider.value = gain;
+                    gainOutputVal.textContent = formatDb(gain);
+                }
             }
         } else {
             currentSettings.globalPreset = globalPresetSelect.value;
@@ -1429,11 +1463,10 @@ const simpleModal = globalThis['simpleModal'];
     function applyGlobalPresetToUI(presetId) {
         const preset = getAllGlobalPresets()[presetId];
         if (!preset) return;
+        suppressCustomSync = !0; // это ЗАГРУЗКА пресета, а не правка пользователя — не трогаем "custom"
         currentSettings.globalPreset = presetId;
-        const vals = preset.values;
-        const skip = new Set(["eqGains", "blacklistPatterns", "toggleState", "eqPresets", "globalPresets", "overlayPresets", "overlayEnabled", "optimisationDelay"]);
-        for (const key in vals)
-            if (!skip.has(key)) currentSettings[key] = JSON.parse(JSON.stringify(vals[key]));
+        const vals = preset.values, skip = new Set(["eqGains", "blacklistPatterns", "toggleState", "eqPresets", "globalPresets", "overlayPresets", "overlayEnabled", "optimisationDelay"]);
+        for (const key in vals) skip.has(key) || (currentSettings[key] = JSON.parse(JSON.stringify(vals[key])));
         updateUI()
     }
 

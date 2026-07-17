@@ -461,8 +461,9 @@ details>.control:last-child {
 }
 
 .controls .select-row {
+  padding: 3px 0;
   display: flex;
-  align-items: center;
+  align-items: end;
   width: 100%;
   gap: 8px;
 }
@@ -472,7 +473,12 @@ details>.control:last-child {
 }
 
 .controls .select-row select {
+  margin-bottom: -3px;
   flex: 1;
+}
+
+.controls .select-row > span{
+  padding: 2px 0;
 }
 
 .controls .button-row {

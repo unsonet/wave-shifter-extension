@@ -18,6 +18,8 @@
     let globalSurroundCenterGain = null;
     let defaultChannelCount = 2;
     let overlayGraphBuilt = false; // Флаг, чтобы не перестраивать граф для каждого нового audio тега
+    let rebuildCancelToken = 0;
+    let pitchProcessorPool = new Map();
 
     // ИНИЦИАЛИЗАЦИЯ ОВЕРЛЕЯ ПРИ ЗАГРУЗКЕ (Решает проблему Race Condition)
     try {
@@ -35,7 +37,7 @@
                     pitchValueSemitones: 0,
                     pitchValueCents: 0,
                     windowSizeMilliseconds: 120,
-                    applySmartProcessing: true,
+                    applySmartProcessing: !0,
                     gainOutputDb: 0,
                     effectsMix: 50,
                     eqGains: Array(10).fill(50),
@@ -43,9 +45,18 @@
                     reverbWet: 0,
                     centerCancel: 0,
                     channelBalance: 0,
-                    modulationLayers: []
-
-                };
+                    modulationLayers: [],
+                    stereoWidthMix: 0,
+                    stereoCenterMix: 0,
+                    stereoFocusMix: 0,
+                    subbassMix: 0,
+                    warmthMix: 0,
+                    definitionMix: 0,
+                    distMix: 0,
+                    delayTime: 250,
+                    delayFeedback: 40,
+                    delayMix: 0
+                }
 
                 const allPresets = {
                     default: { values: defaultPresetValues },
@@ -76,101 +87,165 @@
         }
     } catch (e) { }
 
+
+
+    async function getOrCreatePitchProcessor(slotKey, ctx, useSignalsmith) {
+        const cached = pitchProcessorPool.get(slotKey);
+        if (cached && cached.ctx === ctx) return cached; // уже существует — переиспользуем, не создаём новый
+
+        let pNode = null, corrNodes = null, pType = null;
+
+        if (useSignalsmith) {
+            try {
+                pNode = await new Promise(async (resolve, reject) => {
+                    try { await ctx.audioWorklet.addModule(workletUrl) } catch (e) { }
+                    const n = new AudioWorkletNode(ctx, "signalsmith-stretch", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2] });
+                    const timeout = setTimeout(() => reject(new Error("Timeout")), 1500);
+                    n.port.onmessage = e => { e?.data && "ready" === e.data[0] && (clearTimeout(timeout), resolve(n)) };
+                });
+                pType = "signalsmith";
+            } catch (e) {
+                console.warn(`[WS] Slot ${slotKey}: Signalsmith failed, using Correlator`);
+            }
+        }
+
+        if (!pNode) {
+            try {
+                try { await ctx.audioWorklet.addModule(fallbackWorkletUrl) } catch (e) { }
+                pNode = new AudioWorkletNode(ctx, "pitch-correlator", { numberOfInputs: 2, numberOfOutputs: 1, channelCount: 2, outputChannelCount: [2] });
+                const cGain = (val, dest) => {
+                    const g = ctx.createGain();
+                    "number" == typeof val ? g.gain.value = val : (val.connect(g.gain), g.gain.value = 0);
+                    g.connect(dest);
+                    return g;
+                };
+                const oscillatorsToStore = [];
+                const cConstantSource = ctx.createConstantSource(); cConstantSource.offset.value = 1; oscillatorsToStore.push(cConstantSource);
+                const cSaw1 = createSawtooth(ctx, 0); oscillatorsToStore.push(cSaw1);
+                const cSaw2 = createSawtooth(ctx, Math.PI); oscillatorsToStore.push(cSaw2);
+                const cSine = createSine(ctx, 3 * Math.PI / 2); oscillatorsToStore.push(cSine);
+                const cFreqSrc = ctx.createConstantSource(); cFreqSrc.offset.value = 0; oscillatorsToStore.push(cFreqSrc);
+                const cWss = ctx.createConstantSource(); cWss.offset.value = 0; oscillatorsToStore.push(cWss);
+                cFreqSrc.connect(cSaw1.frequency); cFreqSrc.connect(cSaw2.frequency); cFreqSrc.connect(cSine.frequency);
+                const cDelay1 = ctx.createDelay(), cDelay2 = ctx.createDelay();
+                const cMakeFilter = dest => { const f = ctx.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = 1760; f.connect(dest); return f };
+                const cFilter1 = cMakeFilter(cGain(cWss, cDelay1.delayTime)); cSaw1.connect(cFilter1);
+                const cFilter2 = cMakeFilter(cGain(cWss, cDelay2.delayTime)); cSaw2.connect(cFilter2);
+                const cCsGain1 = cGain(.5, cFilter1), cCsGain2 = cGain(.5, cFilter2);
+                cConstantSource.connect(cCsGain1); cConstantSource.connect(cCsGain2);
+                cDelay1.connect(pNode, 0, 0); cDelay2.connect(pNode, 0, 1);
+                cSine.connect(pNode.parameters.get("c"));
+                const now = ctx.currentTime;
+                try { oscillatorsToStore.forEach(n => n.start(now)) } catch (e) { }
+                oscillatorsToStore.push(cDelay1, cDelay2, cFilter1, cFilter2, cCsGain1, cCsGain2, pNode);
+                corrNodes = { freqSrc: cFreqSrc, wss: cWss, delay1: cDelay1, delay2: cDelay2, oscillators: oscillatorsToStore };
+                pType = "correlator";
+            } catch (e) {
+                console.warn(`[WS] Slot ${slotKey}: Correlator failed, bypassing pitch.`);
+                pNode = null; pType = "bypass";
+            }
+        }
+
+        const entry = { ctx, pitchNode: pNode, correlatorNodes: corrNodes, procType: pType };
+        pitchProcessorPool.set(slotKey, entry);
+        return entry;
+    }
+
     async function rebuildGraph() {
-        if (rebuildGraph._isRunning) return;
+        const token = ++rebuildCancelToken;
+
+        // Если предыдущий вызов ещё выполняется, помечаем отложенный и выходим
+        if (rebuildGraph._isRunning) {
+            rebuildPending = true;
+            return;
+        }
+
         rebuildGraph._isRunning = true;
+        rebuildPending = false; // сбрасываем, так как теперь выполняется
 
         try {
             if (!audioCtx || !sourceGain) return;
 
-            // --- ДИАГНОСТИКА ЭХА: СТАТИСТИКА СБОРКИ ---
+            // !!! ВАЖНО: перед построением Overlay очищаем все узлы обычного режима
+            disposeNormalModeNodes();
+
+            // Отключаем sourceGain от старых подключений
+            try {
+                sourceGain.disconnect();
+            } catch (e) { }
+
             const chainsToBuild = overlayPresetsData || [settings];
 
-            // 1. АГРЕССИВНАЯ ОЧИСТКА СТАРЫХ ЦЕПОЧЕК
-            parallelChains.forEach(chain => {
-                try { chain.pitchNode?.port?.close?.() } catch (e) { }
-                try { chain.pitchNode?.disconnect() } catch (e) { }
-
-                chain.eqs.forEach(f => { try { f.disconnect() } catch (e) { } });
-
-                try { chain.convolver?.disconnect() } catch (e) { }
-                try { chain.balance?.disconnect() } catch (e) { }
-                try { chain.gain?.disconnect() } catch (e) { }
-
-                // Очистка новых узлов дисторшна и делэя
-                try { chain.distIn?.disconnect() } catch (e) { }
-                try { chain.distOut?.disconnect() } catch (e) { }
-                try { chain.delayIn?.disconnect() } catch (e) { }
-                try { chain.delayOut?.disconnect() } catch (e) { }
-
-                // Очистка коррелятора
-                chain.correlatorNodes?.oscillators && chain.correlatorNodes.oscillators.forEach(osc => {
-                    try { osc.stop() } catch (e) { }
-                });
-
-                // Правильная очистка дисторшна (distNodes теперь массив!)
-                if (chain.distNodes) {
-                    chain.distNodes.forEach(n => {
-                        try { n.input?.disconnect() } catch (e) { }
-                        try { n.output?.disconnect() } catch (e) { }
-                        if (n.processors) {
-                            n.processors.forEach(p => { try { p.disconnect() } catch (e) { } });
-                        }
-                    });
-                }
-
-                // Правильная очистка делэя (delayNodes - объект от buildDelayGraph)
-                if (chain.delayNodes) {
-                    try { chain.delayNodes.input?.disconnect() } catch (e) { }
-                    try { chain.delayNodes.output?.disconnect() } catch (e) { }
-                    try { chain.delayNodes.delayL?.disconnect() } catch (e) { }
-                    try { chain.delayNodes.delayR?.disconnect() } catch (e) { }
-                    try { chain.delayNodes.fbL?.disconnect() } catch (e) { }
-                    try { chain.delayNodes.fbR?.disconnect() } catch (e) { }
-                    try { chain.delayNodes.dryGain?.disconnect() } catch (e) { }
-                    try { chain.delayNodes.wetGain?.disconnect() } catch (e) { }
-                }
-
-                // Очистка модуляций цепи
-                if (chain.modNodes) {
-                    chain.modNodes.forEach(n => {
-                        try { n.input?.disconnect() } catch (e) { }
-                        try { n.output?.disconnect() } catch (e) { }
-                        n.oscillators?.forEach(osc => { try { osc.stop() } catch (e) { } });
-                    });
-                }
-            });
+            // Очистка старых параллельных цепочек (Overlay)
+            parallelChains.forEach(chain => disposeChain(chain));
             parallelChains = [];
 
+            // Проверка отмены
+            if (token !== rebuildCancelToken) {
+                console.log("[WS] rebuildGraph отменён до создания глобальных узлов");
+                return;
+            }
 
-            // 2. АГРЕССИВНАЯ ОЧИСТКА ГЛОБАЛЬНЫХ НОД
-            [globalMergeNode, globalCompressorNode, globalStereoPannerNode, globalLimiterNode, globalDolbyInputNode, globalDolbyOutputNode].forEach(n => {
-                if (n) try { n.disconnect(); } catch (e) { }
+            // Очистка глобальных узлов Overlay (включая surround!)
+            const globalNodes = [
+                globalMergeNode, globalCompressorNode, globalStereoPannerNode,
+                globalLimiterNode, globalDolbyInputNode, globalDolbyOutputNode,
+                globalSurroundSplitter, globalSurroundMerger, globalSurroundCenterGain
+            ];
+            globalNodes.forEach(n => {
+                if (n) try {
+                    n.disconnect();
+                } catch (e) { }
             });
-            globalMergeNode = null; globalCompressorNode = null; globalStereoPannerNode = null;
-            globalLimiterNode = null; globalDolbyInputNode = null; globalDolbyOutputNode = null;
+            globalMergeNode = null;
+            globalCompressorNode = null;
+            globalStereoPannerNode = null;
+            globalLimiterNode = null;
+            globalDolbyInputNode = null;
+            globalDolbyOutputNode = null;
+            globalSurroundSplitter = null;
+            globalSurroundMerger = null;
+            globalSurroundCenterGain = null;
 
-            // 3. СОЗДАНИЕ НОВЫХ ГЛОБАЛЬНЫХ НОД
+            // Создание новых глобальных узлов (без изменений)
             globalMergeNode = audioCtx.createGain();
             globalCompressorNode = audioCtx.createDynamicsCompressor();
             globalStereoPannerNode = audioCtx.createStereoPanner();
             globalLimiterNode = audioCtx.createDynamicsCompressor();
-            globalLimiterNode.threshold.value = -1; globalLimiterNode.knee.value = 0; globalLimiterNode.ratio.value = 20; globalLimiterNode.attack.value = 0.003; globalLimiterNode.release.value = 0.25;
+            globalLimiterNode.threshold.value = -1;
+            globalLimiterNode.knee.value = 0;
+            globalLimiterNode.ratio.value = 20;
+            globalLimiterNode.attack.value = 0.003;
+            globalLimiterNode.release.value = 0.25;
 
             try {
-                globalDolbyInputNode = audioCtx.createGain(); globalDolbyOutputNode = audioCtx.createGain();
-                globalSurroundSplitter = audioCtx.createChannelSplitter(2); globalSurroundMerger = audioCtx.createChannelMerger(6);
-                globalSurroundCenterGain = audioCtx.createGain(); globalSurroundCenterGain.gain.value = 0.2;
-                globalDolbyInputNode.connect(globalSurroundSplitter);
-                globalSurroundSplitter.connect(globalSurroundMerger, 0, 0); globalSurroundSplitter.connect(globalSurroundMerger, 1, 1);
-                globalSurroundSplitter.connect(globalSurroundCenterGain, 0); globalSurroundCenterGain.connect(globalSurroundMerger, 0, 2);
-                globalSurroundSplitter.connect(globalSurroundMerger, 0, 3); globalSurroundSplitter.connect(globalSurroundMerger, 0, 4);
-                globalSurroundSplitter.connect(globalSurroundMerger, 1, 5); globalSurroundMerger.connect(globalDolbyOutputNode);
-            } catch (e) { console.error("[WS] Dolby init err", e); }
+                globalDolbyInputNode = audioCtx.createGain();
+                globalDolbyOutputNode = audioCtx.createGain();
+                globalSurroundSplitter = audioCtx.createChannelSplitter(2);
+                globalSurroundMerger = audioCtx.createChannelMerger(6);
+                globalSurroundCenterGain = audioCtx.createGain();
+                globalSurroundCenterGain.gain.value = 0.2;
 
-            globalMergeNode.connect(globalCompressorNode); globalCompressorNode.connect(globalStereoPannerNode);
+                globalDolbyInputNode.connect(globalSurroundSplitter);
+                globalSurroundSplitter.connect(globalSurroundMerger, 0, 0);
+                globalSurroundSplitter.connect(globalSurroundMerger, 1, 1);
+                globalSurroundSplitter.connect(globalSurroundCenterGain, 0);
+                globalSurroundCenterGain.connect(globalSurroundMerger, 0, 2);
+                globalSurroundSplitter.connect(globalSurroundMerger, 0, 3);
+                globalSurroundSplitter.connect(globalSurroundMerger, 0, 4);
+                globalSurroundSplitter.connect(globalSurroundMerger, 1, 5);
+                globalSurroundMerger.connect(globalDolbyOutputNode);
+            } catch (e) {
+                console.error("[WS] Dolby init err", e);
+            }
+
+            globalMergeNode.connect(globalCompressorNode);
+            globalCompressorNode.connect(globalStereoPannerNode);
+
             const connectGlobalEnd = () => {
-                try { globalStereoPannerNode.disconnect(); } catch (e) { }
+                try {
+                    globalStereoPannerNode.disconnect();
+                } catch (e) { }
                 if (settings.dolbyEnabled && globalDolbyInputNode) {
                     defaultChannelCount = audioCtx.destination.channelCount;
                     audioCtx.destination.channelCount = 6;
@@ -184,143 +259,157 @@
             connectGlobalEnd();
             globalLimiterNode.connect(audioCtx.destination);
 
-
-
-            // Проверяем CSP для WASM (используем существующую функцию)
             const isWasmBlocked = await isWasmBlockedByCSP();
 
+            // Построение цепочек (без изменений, оставляем как было)
             for (let i = 0; i < chainsToBuild.length; i++) {
+                if (token !== rebuildCancelToken) {
+                    console.log("[WS] rebuildGraph прерван в середине");
+                    parallelChains.forEach(chain => disposeChain(chain));
+                    parallelChains = [];
+                    return;
+                }
+
                 try {
-                    // Извлекаем настройки, адаптируясь под новый формат { id, values }
                     const pSet = chainsToBuild[i].values || chainsToBuild[i];
-                    // Если WASM заблокирован политиками сайта, принудительно используем Correlator для всех цепей
-                    const useSignalsmith = !isWasmBlocked && (i < overlayConfig.MAX_SIGNALSMITH_CHAINS);
-                    const chainEqs = EQ_BANDS.map(band => { const f = audioCtx.createBiquadFilter(); f.type = band.type; f.frequency.value = band.frequency; if (band.q) f.Q.value = band.q; return f; });
+                    const useSignalsmith = !isWasmBlocked && i < overlayConfig.MAX_SIGNALSMITH_CHAINS;
+
+                    const chainEqs = EQ_BANDS.map(band => {
+                        const f = audioCtx.createBiquadFilter();
+                        f.type = band.type;
+                        f.frequency.value = band.frequency;
+                        if (band.q) f.Q.value = band.q;
+                        return f;
+                    });
                     for (let j = 0; j < chainEqs.length - 1; j++) chainEqs[j].connect(chainEqs[j + 1]);
-                    const chainSplitter = audioCtx.createChannelSplitter(2), chainMerger = audioCtx.createChannelMerger(2);
-                    const chainSubL = audioCtx.createGain(); chainSubL.gain.value = 0; const chainSubR = audioCtx.createGain(); chainSubR.gain.value = 0;
-                    const chainDirectL = audioCtx.createGain(); chainDirectL.gain.value = 1; const chainDirectR = audioCtx.createGain(); chainDirectR.gain.value = 1;
+
+                    // Center Cancel
+                    const chainSplitter = audioCtx.createChannelSplitter(2);
+                    const chainMerger = audioCtx.createChannelMerger(2);
+                    const chainSubL = audioCtx.createGain();
+                    chainSubL.gain.value = 0;
+                    const chainSubR = audioCtx.createGain();
+                    chainSubR.gain.value = 0;
+                    const chainDirectL = audioCtx.createGain();
+                    chainDirectL.gain.value = 1;
+                    const chainDirectR = audioCtx.createGain();
+                    chainDirectR.gain.value = 1;
+
                     chainEqs[chainEqs.length - 1].connect(chainSplitter);
-                    chainSplitter.connect(chainDirectL, 0); chainSplitter.connect(chainSubR, 1); chainSplitter.connect(chainDirectR, 1); chainSplitter.connect(chainSubL, 0);
-                    chainDirectL.connect(chainMerger, 0, 0); chainSubR.connect(chainMerger, 0, 0); chainDirectR.connect(chainMerger, 0, 1); chainSubL.connect(chainMerger, 0, 1);
-                    const chainConvolver = audioCtx.createConvolver(), chainDry = audioCtx.createGain(); chainDry.gain.value = 1;
-                    const chainWet = audioCtx.createGain(); chainWet.gain.value = 0, chainReverbMerge = audioCtx.createGain();
-                    chainMerger.connect(chainDry); chainMerger.connect(chainConvolver); chainConvolver.connect(chainWet); chainDry.connect(chainReverbMerge); chainWet.connect(chainReverbMerge);
-                    const chainBalance = audioCtx.createStereoPanner(), chainGain = audioCtx.createGain();
-                    chainGain.gain.value = Math.pow(10, (pSet.gainOutputDb || 0) / 20);
+                    chainSplitter.connect(chainDirectL, 0);
+                    chainSplitter.connect(chainSubR, 1);
+                    chainSplitter.connect(chainDirectR, 1);
+                    chainSplitter.connect(chainSubL, 0);
+                    chainDirectL.connect(chainMerger, 0, 0);
+                    chainSubR.connect(chainMerger, 0, 0);
+                    chainDirectR.connect(chainMerger, 0, 1);
+                    chainSubL.connect(chainMerger, 0, 1);
+
+                    // Stereo 3D
+                    const chainStereo3d = createStereo3dChain(audioCtx);
+                    chainMerger.connect(chainStereo3d.input);
+
+                    // Reverb
+                    const chainConvolver = audioCtx.createConvolver();
+                    const chainDry = audioCtx.createGain();
+                    chainDry.gain.value = 1;
+                    const chainWet = audioCtx.createGain();
+                    chainWet.gain.value = 0;
+                    const chainReverbMerge = audioCtx.createGain();
+
+                    chainStereo3d.output.connect(chainDry);
+                    chainStereo3d.output.connect(chainConvolver);
+                    chainConvolver.connect(chainWet);
+                    chainDry.connect(chainReverbMerge);
+                    chainWet.connect(chainReverbMerge);
+
+                    // Balance
+                    const chainBalance = audioCtx.createStereoPanner();
+                    const chainGain = audioCtx.createGain();
+                    chainGain.gain.value = 1;
+
                     chainReverbMerge.connect(chainBalance);
 
+                    // Lo-Fi
+                    const chainDistIn = audioCtx.createGain();
+                    const chainDistOut = audioCtx.createGain();
+                    const chainDistDry = audioCtx.createGain();
 
+                    chainDistIn.connect(chainDistDry);
+                    chainDistDry.connect(chainDistOut);
+                    chainBalance.connect(chainDistIn);
 
+                    // Delay
+                    const chainDelayIn = audioCtx.createGain();
+                    const chainDelayOut = audioCtx.createGain();
 
-                    var chainDistIn = audioCtx.createGain(),
-                        chainDistOut = audioCtx.createGain(),
-                        chainDistDry = audioCtx.createGain(),
-                        chainDefIn = audioCtx.createGain(),
-                        chainDefOut = audioCtx.createGain(),
-                        chainDefDry = audioCtx.createGain(),
-                        chainDefHp = audioCtx.createBiquadFilter(),
-                        chainDefExciter = audioCtx.createWaveShaper(),
-                        chainDefLp = audioCtx.createBiquadFilter(),
-                        chainDefWet = audioCtx.createGain();
-                    chainDefHp.type = "highpass", chainDefHp.frequency.value = 3e3, chainDefPre.gain.value = 1, chainDefExciter.curve = makeDefCurve(), chainDefExciter.oversample = "4x", chainDefLp.type = "lowpass", chainDefLp.frequency.value = 14e3, chainDefDry.gain.value = 1, chainDefWet.gain.value = 0,
-                        chainDistIn.connect(chainDistDry),
-                        chainDistDry.connect(chainDistOut),
-                        chainDelayIn.connect(chainDelayOut),
-                        chainDelayOut.connect(chainDefIn),
-                        chainDefIn.connect(chainDefDry),
-                        chainDefDry.connect(chainDefOut),
-                        chainDefIn.connect(chainDefHp),
-                        chainDefHp.connect(chainDefExciter),
-                        chainDefExciter.connect(chainDefLp),
-                        chainDefLp.connect(chainDefWet),
-                        chainDefWet.connect(chainDefOut),
-                        chainDefOut.connect(chainGain), 
-                        chainGain.connect(globalMergeNode), 
-                        ovEffectsWetNode = audioCtx.createGain(), 
-                        ovEffectsDryNode = audioCtx.createGain(), 
-                        globalMergeNode.connect(ovEffectsWetNode), 
-                        ovEffectsWetNode.connect(globalCompressorNode), 
-                        sourceGain.connect(ovEffectsDryNode), 
-                        ovEffectsDryNode.connect(globalCompressorNode);
+                    chainDistOut.connect(chainDelayIn);
+                    chainDelayIn.connect(chainDelayOut);
 
+                    // Bass
+                    const chainBass = createBassChain(audioCtx);
+                    chainDelayOut.connect(chainBass.input);
 
+                    // Definition
+                    const chainDefIn = audioCtx.createGain();
+                    const chainDefOut = audioCtx.createGain();
+                    const chainDefDry = audioCtx.createGain();
+                    const chainDefHp = audioCtx.createBiquadFilter();
+                    const chainDefPre = audioCtx.createGain();
+                    const chainDefExciter = audioCtx.createWaveShaper();
+                    const chainDefLp = audioCtx.createBiquadFilter();
+                    const chainDefWet = audioCtx.createGain();
 
-                    let pitchNode = null, correlatorNodes = null, procType = null;
-                    try {
-                        if (useSignalsmith) {
-                            const node = await new Promise(async (resolve, reject) => {
-                                try { await audioCtx.audioWorklet.addModule(workletUrl); } catch (e) { }
-                                const n = new AudioWorkletNode(audioCtx, "signalsmith-stretch", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2] });
-                                const timeout = setTimeout(() => reject(new Error("Timeout")), 1500);
-                                n.port.onmessage = e => { if (e?.data && e.data[0] === "ready") { clearTimeout(timeout); resolve(n); } };
-                            });
-                            pitchNode = node; procType = "signalsmith";
-                        }
-                    } catch (e) { console.warn(`[WS] Chain ${i} Signalsmith failed, using Correlator`); }
+                    chainDefHp.type = "highpass";
+                    chainDefHp.frequency.value = 3000;
+                    chainDefPre.gain.value = 1;
+                    chainDefExciter.curve = makeDefCurve();
+                    chainDefExciter.oversample = "4x";
+                    chainDefLp.type = "lowpass";
+                    chainDefLp.frequency.value = 14000;
+                    chainDefDry.gain.value = 1;
+                    chainDefWet.gain.value = 0;
 
-                    if (!pitchNode) {
-                        try {
-                            try { await audioCtx.audioWorklet.addModule(fallbackWorkletUrl); } catch (e) { }
-                            pitchNode = new AudioWorkletNode(audioCtx, "pitch-correlator", { numberOfInputs: 2, numberOfOutputs: 1, channelCount: 2, outputChannelCount: [2] });
-                            const cGain = (val, dest) => {
-                                const g = audioCtx.createGain();
-                                if (typeof val === "number") g.gain.value = val;
-                                else { val.connect(g.gain); g.gain.value = 0; }
-                                g.connect(dest);
-                                return g;
-                            };
+                    chainBass.output.connect(chainDefIn);
+                    chainDefIn.connect(chainDefDry);
+                    chainDefDry.connect(chainDefOut);
+                    chainDefIn.connect(chainDefHp);
+                    chainDefHp.connect(chainDefPre);
+                    chainDefPre.connect(chainDefExciter);
+                    chainDefExciter.connect(chainDefLp);
+                    chainDefLp.connect(chainDefWet);
+                    chainDefWet.connect(chainDefOut);
 
-                            const oscillatorsToStore = []; // Сохраняем осцилляторы, чтобы потом их убить
-                            const cConstantSource = audioCtx.createConstantSource(); cConstantSource.offset.value = 1; oscillatorsToStore.push(cConstantSource);
-                            const cSaw1 = createSawtooth(audioCtx, 0); oscillatorsToStore.push(cSaw1);
-                            const cSaw2 = createSawtooth(audioCtx, Math.PI); oscillatorsToStore.push(cSaw2);
-                            const cSine = createSine(audioCtx, 3 * Math.PI / 2); oscillatorsToStore.push(cSine);
-                            const cFreqSrc = audioCtx.createConstantSource(); cFreqSrc.offset.value = 0; oscillatorsToStore.push(cFreqSrc);
-                            const cWss = audioCtx.createConstantSource(); cWss.offset.value = 0; oscillatorsToStore.push(cWss);
+                    chainDefOut.connect(chainGain);
+                    chainGain.connect(globalMergeNode);
 
-                            cFreqSrc.connect(cSaw1.frequency); cFreqSrc.connect(cSaw2.frequency); cFreqSrc.connect(cSine.frequency);
-                            const cDelay1 = audioCtx.createDelay(), cDelay2 = audioCtx.createDelay();
-                            const cMakeFilter = dest => { const f = audioCtx.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = 1760; f.connect(dest); return f; };
-                            const cFilter1 = cMakeFilter(cGain(cWss, cDelay1.delayTime)); cSaw1.connect(cFilter1);
-                            const cFilter2 = cMakeFilter(cGain(cWss, cDelay2.delayTime)); cSaw2.connect(cFilter2);
-                            const cCsGain1 = cGain(0.5, cFilter1);
-                            const cCsGain2 = cGain(0.5, cFilter2);
-                            cConstantSource.connect(cCsGain1);
-                            cConstantSource.connect(cCsGain2);
-                            cDelay1.connect(pitchNode, 0, 0); cDelay2.connect(pitchNode, 0, 1); cSine.connect(pitchNode.parameters.get("c"));
+                    // Pitch shifting (без изменений)
+                    const {
+                        pitchNode,
+                        correlatorNodes,
+                        procType
+                    } = await getOrCreatePitchProcessor(`overlay:${i}`, audioCtx, useSignalsmith);
 
-                            const now = audioCtx.currentTime;
-                            try { oscillatorsToStore.forEach(n => n.start(now)); } catch (e) { }
-
-                            correlatorNodes = {
-                                freqSrc: cFreqSrc, wss: cWss, delay1: cDelay1, delay2: cDelay2,
-                                oscillators: oscillatorsToStore
-                            };
-                            procType = "correlator";
-                        } catch (e) {
-                            // Если Correlator упал, отключаем питч для этой цепи, но НЕ молчим!
-                            console.warn(`[WS] Chain ${i} Correlator failed, bypassing pitch.`);
-                            pitchNode = null;
-                            procType = "bypass";
-                        }
-                    }
-
-                    if (procType === "signalsmith") { sourceGain.connect(pitchNode); pitchNode.connect(chainEqs[0]); }
-                    else if (procType === "correlator" && correlatorNodes) { sourceGain.connect(correlatorNodes.delay1); sourceGain.connect(correlatorNodes.delay2); pitchNode.connect(chainEqs[0]); }
-                    else {
-                        // Запасной вариант: если оба процессора упали, подключаем источник напрямую к EQ, чтобы не было тишины
-                        console.warn(`[WS] Chain ${i} processors failed, bypassing pitch`);
+                    // Подключение pitchNode (оставляем как было)
+                    if (procType === "signalsmith") {
+                        sourceGain.connect(pitchNode);
+                        pitchNode.connect(chainEqs[0]);
+                    } else if (procType === "correlator" && correlatorNodes) {
+                        sourceGain.connect(correlatorNodes.delay1);
+                        sourceGain.connect(correlatorNodes.delay2);
+                        pitchNode.connect(chainEqs[0]);
+                    } else {
                         sourceGain.connect(chainEqs[0]);
                     }
 
                     parallelChains.push({
-                        pitchNode: pitchNode,
+                        pitchNode,
                         eqs: chainEqs,
-                        procType: procType,
-                        correlatorNodes: correlatorNodes,
+                        procType,
+                        correlatorNodes,
                         subL: chainSubL,
                         subR: chainSubR,
+                        stereo3d: chainStereo3d,
                         convolver: chainConvolver,
                         dry: chainDry,
                         wet: chainWet,
@@ -336,25 +425,325 @@
                         distOut: chainDistOut,
                         distDry: chainDistDry,
                         distNodes: null,
+                        bass: chainBass,
                         defIn: chainDefIn,
                         defOut: chainDefOut,
                         defDry: chainDefDry,
-                        defWet: chainDefWet
+                        defPre: chainDefPre,
+                        defWet: chainDefWet,
                     });
 
                 } catch (chainError) {
                     console.error(`[WS] Critical error building chain ${i}, skipping it:`, chainError);
                 }
             }
-            if (parallelChains.length === 0) sourceGain.connect(globalMergeNode);
+
+            // Проверка отмены после построения
+            if (token !== rebuildCancelToken) {
+                console.log("[WS] rebuildGraph отменён после построения");
+                parallelChains.forEach(chain => disposeChain(chain));
+                parallelChains = [];
+                return;
+            }
+
+            if (parallelChains.length === 0) {
+                sourceGain.connect(globalMergeNode);
+            }
             refreshOverlayNodes();
-            overlayGraphBuilt = true; // Граф успешно собран
+            overlayGraphBuilt = true;
+
         } catch (error) {
             console.error("[WS] Graph rebuild error:", error);
         } finally {
-            // Снимаем замок в любом случае, даже если была ошибка
             rebuildGraph._isRunning = false;
+            // Если есть отложенный вызов, запускаем его
+            if (rebuildPending) {
+                rebuildPending = false;
+                await rebuildGraph(); // рекурсивно, но с новым токеном
+            }
         }
+    }
+
+    function disposeChain(chain) {
+        if (!chain) return;
+
+        // pitchNode/correlatorNodes намеренно не трогаем — теперь это общий пул
+        // (pitchProcessorPool), переиспользуемый между пересборками, а не
+        // создаваемый заново на каждый toggle. Осцилляторы Correlator нельзя
+        // останавливать — start()/stop() у OscillatorNode одноразовые, после
+        // stop() слот пула станет непригоден для повторного использования.
+
+        // 3. EQ фильтры (BiquadFilterNode)
+        if (chain.eqs) {
+            chain.eqs.forEach(f => { try { f.disconnect(); } catch (e) { } });
+            chain.eqs = null;
+        }
+
+        // 4. Sub (GainNode)
+        try { chain.subL?.disconnect(); } catch (e) { }
+        try { chain.subR?.disconnect(); } catch (e) { }
+        chain.subL = null;
+        chain.subR = null;
+
+        // 5. Stereo3D (содержит Splitter, Merger, Gain, Delay и др.)
+        if (chain.stereo3d && typeof chain.stereo3d.dispose === 'function') {
+            try { chain.stereo3d.dispose(); } catch (e) { }
+        } else {
+            // если dispose нет, отключаем вручную (но в createStereo3dChain есть dispose)
+            try { chain.stereo3d?.input?.disconnect(); } catch (e) { }
+            try { chain.stereo3d?.output?.disconnect(); } catch (e) { }
+        }
+        chain.stereo3d = null;
+
+        // 6. Reverb
+        try { chain.convolver?.disconnect(); } catch (e) { }
+        try { chain.dry?.disconnect(); } catch (e) { }
+        try { chain.wet?.disconnect(); } catch (e) { }
+        chain.convolver = null;
+        chain.dry = null;
+        chain.wet = null;
+
+        // 7. Balance (StereoPanner) и Gain
+        try { chain.balance?.disconnect(); } catch (e) { }
+        try { chain.gain?.disconnect(); } catch (e) { }
+        chain.balance = null;
+        chain.gain = null;
+
+        // 8. Distortion
+        try { chain.distIn?.disconnect(); } catch (e) { }
+        try { chain.distOut?.disconnect(); } catch (e) { }
+        try { chain.distDry?.disconnect(); } catch (e) { }
+        chain.distIn = null;
+        chain.distOut = null;
+        chain.distDry = null;
+
+        if (chain.distNodes) {
+            chain.distNodes.forEach(n => {
+                try { n.workletNode?.port?.close?.(); } catch (e) { }
+                try { n.workletNode?.disconnect(); } catch (e) { }
+                try { n.input?.disconnect(); } catch (e) { }
+                try { n.output?.disconnect(); } catch (e) { }
+                if (n.processors) {
+                    n.processors.forEach(p => {
+                        try { p.port?.close?.(); } catch (e) { }
+                        try { p.disconnect(); } catch (e) { }
+                        try { p.hp?.disconnect?.(); } catch (e) { }
+                        try { p.lp?.disconnect?.(); } catch (e) { }
+                    });
+                }
+            });
+            chain.distNodes = null;
+        }
+
+        // 9. Delay
+        try { chain.delayIn?.disconnect(); } catch (e) { }
+        try { chain.delayOut?.disconnect(); } catch (e) { }
+        chain.delayIn = null;
+        chain.delayOut = null;
+
+        if (chain.delayNodes) {
+            try { chain.delayNodes.input?.disconnect(); } catch (e) { }
+            try { chain.delayNodes.output?.disconnect(); } catch (e) { }
+            try { chain.delayNodes.delayL?.disconnect(); } catch (e) { }
+            try { chain.delayNodes.delayR?.disconnect(); } catch (e) { }
+            try { chain.delayNodes.fbL?.disconnect(); } catch (e) { }
+            try { chain.delayNodes.fbR?.disconnect(); } catch (e) { }
+            try { chain.delayNodes.dryGain?.disconnect(); } catch (e) { }
+            try { chain.delayNodes.wetGain?.disconnect(); } catch (e) { }
+            chain.delayNodes = null;
+        }
+
+        // 10. Bass (содержит Gain, BiquadFilter, WaveShaper)
+        if (chain.bass && typeof chain.bass.dispose === 'function') {
+            try { chain.bass.dispose(); } catch (e) { }
+        } else {
+            try { chain.bass?.input?.disconnect(); } catch (e) { }
+            try { chain.bass?.output?.disconnect(); } catch (e) { }
+        }
+        chain.bass = null;
+
+        // 11. Definition (Gain, BiquadFilter, WaveShaper)
+        try { chain.defIn?.disconnect(); } catch (e) { }
+        try { chain.defOut?.disconnect(); } catch (e) { }
+        try { chain.defDry?.disconnect(); } catch (e) { }
+        try { chain.defPre?.disconnect(); } catch (e) { }
+        try { chain.defWet?.disconnect(); } catch (e) { }
+        try { chain.defHp?.disconnect(); } catch (e) { }
+        try { chain.defLp?.disconnect(); } catch (e) { }
+        try { chain.defExciter?.disconnect(); } catch (e) { }
+        chain.defIn = null;
+        chain.defOut = null;
+        chain.defDry = null;
+        chain.defPre = null;
+        chain.defWet = null;
+        chain.defHp = null;
+        chain.defLp = null;
+        chain.defExciter = null;
+
+        // 12. Modulation Layers (если есть)
+        if (chain.modNodes) {
+            chain.modNodes.forEach(n => {
+                try { n.input?.disconnect(); } catch (e) { }
+                try { n.output?.disconnect(); } catch (e) { }
+                if (n.oscillators) {
+                    n.oscillators.forEach(osc => {
+                        try { osc.stop(); } catch (e) { }
+                        try { osc.disconnect(); } catch (e) { }
+                    });
+                }
+            });
+            chain.modNodes = null;
+        }
+
+        // 13. Очищаем сам объект цепочки (удаляем ссылки)
+        chain.pitchNode = null;
+        chain.eqs = null;
+        chain.subL = null;
+        chain.subR = null;
+        chain.stereo3d = null;
+        chain.convolver = null;
+        chain.dry = null;
+        chain.wet = null;
+        chain.balance = null;
+        chain.gain = null;
+        chain.distIn = null;
+        chain.distOut = null;
+        chain.distDry = null;
+        chain.distNodes = null;
+        chain.delayIn = null;
+        chain.delayOut = null;
+        chain.delayNodes = null;
+        chain.bass = null;
+        chain.defIn = null;
+        chain.defOut = null;
+        chain.defDry = null;
+        chain.defPre = null;
+        chain.defWet = null;
+        chain.defHp = null;
+        chain.defLp = null;
+        chain.defExciter = null;
+        chain.modNodes = null;
+        chain.settings = null;
+    }
+
+    function disposeNormalModeNodes() {
+        // 1. Останавливаем и отключаем осцилляторы модуляции
+        modulationLayersNodes.forEach(n => {
+            try { n.input?.disconnect(); } catch (e) { }
+            try { n.output?.disconnect(); } catch (e) { }
+            if (n.oscillators) {
+                n.oscillators.forEach(osc => {
+                    try { osc.stop(); } catch (e) { }
+                    try { osc.disconnect(); } catch (e) { }
+                });
+            }
+        });
+        modulationLayersNodes = [];
+
+        // 2. Отключаем дисторшн-узлы обычного режима
+        if (distNodes) {
+            distNodes.forEach(n => {
+                try { n.input?.disconnect(); } catch (e) { }
+                try { n.output?.disconnect(); } catch (e) { }
+                if (n.workletNode) {
+                    try { n.workletNode.port?.close?.(); } catch (e) { }
+                    try { n.workletNode.disconnect(); } catch (e) { }
+                }
+                if (n.processors) {
+                    n.processors.forEach(p => {
+                        try { p.disconnect(); } catch (e) { }
+                        try { p.port?.close?.(); } catch (e) { }
+                    });
+                }
+            });
+            distNodes = null;
+        }
+
+        // 3. Отключаем задержку
+        if (delayNodes) {
+            try { delayNodes.input?.disconnect(); } catch (e) { }
+            try { delayNodes.output?.disconnect(); } catch (e) { }
+            try { delayNodes.delayL?.disconnect(); } catch (e) { }
+            try { delayNodes.delayR?.disconnect(); } catch (e) { }
+            try { delayNodes.fbL?.disconnect(); } catch (e) { }
+            try { delayNodes.fbR?.disconnect(); } catch (e) { }
+            try { delayNodes.dryGain?.disconnect(); } catch (e) { }
+            try { delayNodes.wetGain?.disconnect(); } catch (e) { }
+            delayNodes = null;
+        }
+
+        // 4. Отключаем EQ фильтры
+        if (eqFilters) {
+            eqFilters.forEach(f => { try { f.disconnect(); } catch (e) { } });
+            eqFilters = [];
+        }
+
+        // 5. Отключаем pitchNode (если есть)
+        try { pitchNode?.disconnect() } catch (e) { }
+        pitchNode = null;
+
+        // 6. Отключаем все основные узлы обычного режима
+        const nodes = [
+            gainNode, limiterNode, stereoSplitter, stereoMerger, stereo3dChain,
+            subLeftGain, subRightGain, convolverNode, dryGainNode, wetGainNode,
+            reverbMergeNode, compressorNode, stereoPannerNode, dolbyInputNode,
+            dolbyOutputNode, surroundSplitter, surroundMerger, surroundCenterGain,
+            distInputNode, distOutputNode, distDryGain, delayInputNode, delayOutputNode,
+            defInputNode, defOutputNode, defDryGain, defHpFilter, defPreGain,
+            defExciter, defLpFilter, defWetGain, bassChain, effectsWetNode, effectsDryNode,
+            modulationInputNode, modulationOutputNode
+        ];
+        nodes.forEach(n => {
+            try { n?.disconnect(); } catch (e) { }
+            if (n && typeof n.dispose === 'function') {
+                try { n.dispose(); } catch (e) { }
+            }
+        });
+
+        // 7. Обнуляем все переменные (включая сброс флагов)
+        gainNode = null;
+        limiterNode = null;
+        stereoSplitter = null;
+        stereoMerger = null;
+        stereo3dChain = null;
+        subLeftGain = null;
+        subRightGain = null;
+        convolverNode = null;
+        dryGainNode = null;
+        wetGainNode = null;
+        reverbMergeNode = null;
+        compressorNode = null;
+        stereoPannerNode = null;
+        dolbyInputNode = null;
+        dolbyOutputNode = null;
+        surroundSplitter = null;
+        surroundMerger = null;
+        surroundCenterGain = null;
+        distInputNode = null;
+        distOutputNode = null;
+        distDryGain = null;
+        delayInputNode = null;
+        delayOutputNode = null;
+        defInputNode = null;
+        defOutputNode = null;
+        defDryGain = null;
+        defHpFilter = null;
+        defPreGain = null;
+        defExciter = null;
+        defLpFilter = null;
+        defWetGain = null;
+        bassChain = null;
+        effectsWetNode = null;
+        effectsDryNode = null;
+        modulationInputNode = null;
+        modulationOutputNode = null;
+        eqFilters = [];
+        pitchNode = null;
+        isNodeReady = false;
+        lastDistType = null;
+        // сбросим also lastConfiguredBlockMs etc. (опционально)
+        lastConfiguredBlockMs = null;
+        lastConfiguredSmart = null;
     }
 
     async function refreshOverlayNodes() {
@@ -386,6 +775,7 @@
             const centerCancelVal = -(pSet.centerCancel || 0) / 100;
             chain.subL.gain.value = centerCancelVal;
             chain.subR.gain.value = centerCancelVal;
+            updateStereo3dChain(chain.stereo3d, { ...settings, ...pSet }, audioCtx)
             // КРИТИЧЕСКИЙ ФИКС: Если тип ревербера "null", жестко глушим wet канал.
             // В некоторых браузерах ConvolverNode с buffer=null создает задержку в 1 блок (эхо).
             if (pSet.reverbType && pSet.reverbType !== "null") {
@@ -402,8 +792,8 @@
                 chain.wet.gain.value = 0; // Глушим wet, чтобы избежать фленжера/эха от null buffer
                 chain.convolver.buffer = null;
             }
-            chain.balance.pan.value = (pSet.channelBalance || 0) / 100;
-
+            chain.balance.pan.value = (pSet.channelBalance || 0) / 100,
+                chain.gain.gain.value = Math.pow(10, (pSet.gainOutputDb || 0) / 20)
             // --- Переключение модуляции ВНУТРИ цепи ---
             if (chain.modNodes) {
                 chain.modNodes.forEach(function (n) {
@@ -469,6 +859,9 @@
                 }
             }
         });
+        if (globalMergeNode) {
+            globalMergeNode.gain.value = 1; // всегда 1, чтобы Effects Mix не влиял
+        }
         if (globalCompressorNode) { globalCompressorNode.threshold.value = settings.compressorThreshold || 0; globalCompressorNode.knee.value = settings.compressorKnee || 30; globalCompressorNode.ratio.value = settings.compressorRatio || 1; globalCompressorNode.attack.value = (settings.compressorAttack || 3) / 1000; globalCompressorNode.release.value = (settings.compressorRelease || 250) / 1000; }
         if (globalDolbyInputNode) {
             try { globalStereoPannerNode.disconnect(); } catch (e) { }
@@ -479,14 +872,13 @@
                 globalDolbyOutputNode.connect(globalLimiterNode);
             }
             else {
-                audioCtx.destination.channelCount = defaultChannelCount || 2;
-                globalStereoPannerNode.connect(globalLimiterNode);
+                audioCtx.destination.channelCount = defaultChannelCount || 2,
+                    globalStereoPannerNode.connect(globalLimiterNode);
             }
+
+
         }
         refreshModulationGraph();
-        var eMixM = (settings.effectsMix || 0) / 100;
-        ovEffectsWetNode && ovEffectsWetNode.gain.linearRampToValueAtTime(eMixM, audioCtx.currentTime + .02),
-            ovEffectsDryNode && ovEffectsDryNode.gain.linearRampToValueAtTime(1 - eMixM, audioCtx.currentTime + .02);
 
 
         // Применяем Distortion и Delay для КАЖДОЙ цепи, читая ИМЕННО ИЗ ЕЁ ПРЕСЕТА
@@ -503,7 +895,34 @@
 
                 if (!layers || !layers.length) {
                     if (c.distNodes) {
-                        c.distNodes.forEach(function (n) { try { n.input.disconnect() } catch (e) { } try { n.output.disconnect() } catch (e) { } n.processors && n.processors.forEach(function (p) { try { p.disconnect() } catch (e) { } }) });
+                        c.distNodes.forEach(function (n) {
+                            try {
+                                n.workletNode?.port?.close?.()
+                            } catch (e) { }
+                            try {
+                                n.workletNode?.disconnect()
+                            } catch (e) { }
+                            try {
+                                n.input.disconnect()
+                            } catch (e) { }
+                            try {
+                                n.output.disconnect()
+                            } catch (e) { }
+                            n.processors && n.processors.forEach(function (p) {
+                                try {
+                                    p.port?.close?.()
+                                } catch (e) { }
+                                try {
+                                    p.disconnect()
+                                } catch (e) { }
+                                try {
+                                    p.hp?.disconnect?.()
+                                } catch (e) { }
+                                try {
+                                    p.lp?.disconnect?.()
+                                } catch (e) { }
+                            })
+                        });
                         c.distNodes = null;
                         c._lastDistLayersHash = null;
                     }
@@ -536,7 +955,22 @@
                 }
             })(chain);
 
-            (function (c) { if (c && c.defWet && c.defPre) { var m = (c.settings?.definitionMix || 0) / 100; var d = 1 + Math.pow(m, 1.5) * 3, w = Math.pow(m, 0.8) * 0.55; c.defPre.gain.linearRampToValueAtTime(d, audioCtx.currentTime + .02), c.defWet.gain.linearRampToValueAtTime(w, audioCtx.currentTime + .02) } })(chain);
+            (function (c) {
+                if (c && c.defWet && c.defPre) {
+                    var m = (c.settings?.definitionMix || 0) / 100,
+                        d = 1 + 3 * Math.pow(m, 1.5),
+                        w = .55 * Math.pow(m, .8);
+                    c.defPre.gain.linearRampToValueAtTime(d, audioCtx.currentTime + .02), c.defWet.gain.linearRampToValueAtTime(w, audioCtx.currentTime + .02)
+                }
+            })(chain);
+
+            (function (c) {
+                if (c && c.bass) updateBassChain(c.bass, {
+                    ...settings,
+                    ...(c.settings || {})
+                }, audioCtx)
+            })(chain);
+
             // --- Обновление Delay ---
             (function (c) {
                 if (!c || !c.delayIn) return;
@@ -632,20 +1066,10 @@
         defLpFilter = null, defWetGain = null,
 
         // --- Bass (Subbass / Warmth) ---
-        bassInputNode = null, bassOutputNode = null, bassDryGain = null,
-        subbassPreLp = null, subbassPreGain = null, subbassExciter = null,
-        subbassPostBp = null, subbassWetGain = null,
-        warmthPreBp = null, warmthPreGain = null, warmthExciter = null,
-        warmthWetGain = null,
+        bassChain = null, stereo3dChain = null,
 
-        effectsWetNode = null, effectsDryNode = null,
-        ovEffectsWetNode = null, ovEffectsDryNode = null,
-        // Добавить в общий let-список, рядом с bass-переменными:
-        stereo3dSplitter = null, stereo3dMerger = null,
-        msEncodeML = null, msEncodeMR = null, msEncodeSL = null, msEncodeSR = null,
-        midBusGain = null, sideBusGain = null,
-        centerBoostGain = null, widthBoostGain = null, widthBoostInvGain = null,
-        focusFilter = null, stereo3dOutputNode = null;
+        effectsWetNode = null, effectsDryNode = null;
+
 
     const convolverCache = new Map;
     let lastConfiguredBlockMs = null, lastConfiguredSmart = null, pitchUpdateRafId = null;
@@ -833,41 +1257,13 @@
             return;
         }
         if (audioCtx && audioCtx !== ctx) {
-            try {
-                pitchNode?.disconnect()
-            } catch { }
-            try {
-                gainNode?.disconnect()
-            } catch { }
-            try {
-                limiterNode?.disconnect()
-            } catch { }
-            try {
-                pitchNode?.port?.close?.()
-            } catch { }
-            eqFilters.forEach(f => {
-                try {
-                    f.disconnect()
-                } catch { }
-            }), pitchNode = null, eqFilters = [], gainNode = null, limiterNode = null, isNodeReady = !1, sourceGain = null, lastConfiguredBlockMs = null, lastConfiguredSmart = null, modulationInputNode = null, modulationOutputNode = null, modulationLayersNodes = [], delayInputNode = null, delayOutputNode = null, distInputNode = null, distOutputNode = null, distNodes = null, defInputNode = null, defOutputNode = null, defDryGain = null,
-                defHpFilter = null, defPreGain = null, defExciter = null,
-                defLpFilter = null, defWetGain = null,
-
-                // --- Bass (Subbass / Warmth) ---
-                bassInputNode = null, bassOutputNode = null, bassDryGain = null,
-                subbassPreLp = null, subbassPreGain = null, subbassExciter = null,
-                subbassPostBp = null, subbassWetGain = null,
-                warmthPreBp = null, warmthPreGain = null, warmthExciter = null,
-                warmthWetGain = null,
-
-                effectsWetNode = null, effectsDryNode = null,
-                ovEffectsWetNode = null, ovEffectsDryNode = null,
-                // Добавить в общий let-список, рядом с bass-переменными:
-                stereo3dSplitter = null, stereo3dMerger = null,
-                msEncodeML = null, msEncodeMR = null, msEncodeSL = null, msEncodeSR = null,
-                midBusGain = null, sideBusGain = null,
-                centerBoostGain = null, widthBoostGain = null, sideDelayNode = null, widthBoostInvGain = null,
-                focusFilter = null, stereo3dOutputNode = null;
+            // Полная очистка старых узлов обычного режима
+            disposeNormalModeNodes();
+            // Сброс дополнительных глобальных переменных
+            sourceGain = null;
+            lastConfiguredBlockMs = null;
+            lastConfiguredSmart = null;
+            // isNodeReady уже обнуляется в disposeNormalModeNodes
         }
 
         audioCtx = ctx;
@@ -893,61 +1289,11 @@
                 stereoSplitter = ctx.createChannelSplitter(2);
                 stereoMerger = ctx.createChannelMerger(2);
 
+                // --- Stereo 3D ---
+                stereo3dChain = createStereo3dChain(ctx);
+                stereoMerger.connect(stereo3dChain.input);
 
-                // --- Stereo 3D: Width (M/S widening) + Center (M boost) + Focus (presence EQ) ---
-                stereo3dSplitter = ctx.createChannelSplitter(2);
-                stereo3dMerger = ctx.createChannelMerger(2);
-
-                msEncodeML = ctx.createGain(); msEncodeML.gain.value = 0.5;   // L → шина M
-                msEncodeMR = ctx.createGain(); msEncodeMR.gain.value = 0.5;   // R → шина M
-                msEncodeSL = ctx.createGain(); msEncodeSL.gain.value = 0.5;   // L → шина S
-                msEncodeSR = ctx.createGain(); msEncodeSR.gain.value = -0.5;  // R → шина S (инверсия)
-
-                midBusGain = ctx.createGain(); midBusGain.gain.value = 1;
-                sideBusGain = ctx.createGain(); sideBusGain.gain.value = 1;
-
-                centerBoostGain = ctx.createGain(); centerBoostGain.gain.value = 1;
-                widthBoostGain = ctx.createGain(); widthBoostGain.gain.value = 1;
-                widthBoostInvGain = ctx.createGain(); widthBoostInvGain.gain.value = -1;
-
-                focusFilter = ctx.createBiquadFilter();
-                focusFilter.type = "peaking";
-                focusFilter.frequency.value = 3200;
-                focusFilter.Q.value = 1.1;
-                focusFilter.gain.value = 0;
-
-                stereo3dOutputNode = ctx.createGain();
-
-                // Encode: M = 0.5L + 0.5R,  S = 0.5L − 0.5R
-                stereoMerger.connect(stereo3dSplitter);
-                stereo3dSplitter.connect(msEncodeML, 0);
-                stereo3dSplitter.connect(msEncodeSL, 0);
-                stereo3dSplitter.connect(msEncodeMR, 1);
-                stereo3dSplitter.connect(msEncodeSR, 1);
-                msEncodeML.connect(midBusGain);
-                msEncodeMR.connect(midBusGain);
-                msEncodeSL.connect(sideBusGain);
-                msEncodeSR.connect(sideBusGain);
-
-                // Независимое усиление M (Center) и S (Width)
-                sideDelayNode = ctx.createDelay(0.05); // буфер до 50мс, реально используем ~9мс максимум
-
-                midBusGain.connect(centerBoostGain);
-                sideBusGain.connect(sideDelayNode);
-                sideDelayNode.connect(widthBoostGain);
-
-                // Decode: L' = M' + S',  R' = M' − S'
-                centerBoostGain.connect(stereo3dMerger, 0, 0);
-                centerBoostGain.connect(stereo3dMerger, 0, 1);
-                widthBoostGain.connect(stereo3dMerger, 0, 0);
-                widthBoostGain.connect(widthBoostInvGain);
-                widthBoostInvGain.connect(stereo3dMerger, 0, 1);
-
-                // Focus — presence EQ последовательно после decode
-                stereo3dMerger.connect(focusFilter);
-                focusFilter.connect(stereo3dOutputNode);
-
-                //center cancel
+                // center cancel
                 subLeftGain = ctx.createGain(); subLeftGain.gain.value = 0;
                 subRightGain = ctx.createGain(); subRightGain.gain.value = 0;
                 let directLeft = ctx.createGain(); directLeft.gain.value = 1;
@@ -963,23 +1309,14 @@
                 directRight.connect(stereoMerger, 0, 1);
                 subLeftGain.connect(stereoMerger, 0, 1);
 
-                [msEncodeML, msEncodeMR, msEncodeSL, msEncodeSR,
-                    midBusGain, sideBusGain, sideDelayNode,
-                    centerBoostGain, widthBoostGain, widthBoostInvGain
-                ].forEach(node => {
-                    node.channelCount = 1;
-                    node.channelCountMode = "explicit";
-                    node.channelInterpretation = "discrete";
-                });
-
                 // --- РЕВЕРБЕРАТОР ---
                 convolverNode = ctx.createConvolver();
                 dryGainNode = ctx.createGain(); dryGainNode.gain.value = 1;
                 wetGainNode = ctx.createGain(); wetGainNode.gain.value = 0;
                 reverbMergeNode = ctx.createGain();
 
-                stereo3dOutputNode.connect(dryGainNode);
-                stereo3dOutputNode.connect(convolverNode);
+                stereo3dChain.output.connect(dryGainNode), stereo3dChain.output.connect(convolverNode)
+
                 convolverNode.connect(wetGainNode);
                 dryGainNode.connect(reverbMergeNode);
                 wetGainNode.connect(reverbMergeNode);
@@ -1020,61 +1357,7 @@
                 defDryGain.gain.value = 1; defWetGain.gain.value = 0;
 
                 // ДОБАВИТЬ сразу после этого блока:
-                bassInputNode = ctx.createGain();
-                bassOutputNode = ctx.createGain();
-                bassDryGain = ctx.createGain();
-
-                subbassPreLp = ctx.createBiquadFilter();
-                subbassPreGain = ctx.createGain();
-                subbassExciter = ctx.createWaveShaper();
-                subbassPostBp = ctx.createBiquadFilter();
-                subbassWetGain = ctx.createGain();
-
-                warmthPreBp = ctx.createBiquadFilter();
-                warmthPreGain = ctx.createGain();
-                warmthExciter = ctx.createWaveShaper();
-                warmthWetGain = ctx.createGain();
-
-                bassDryGain.gain.value = 1;
-
-                subbassPreLp.type = "lowpass";
-                subbassPreLp.frequency.value = 150;
-                subbassPreLp.Q.value = 0.707;
-                subbassPreGain.gain.value = 1;
-                subbassExciter.curve = makeSubbassCurve();
-                subbassExciter.oversample = "4x";
-                subbassPostBp.type = "bandpass";
-                subbassPostBp.frequency.value = 200;
-                subbassPostBp.Q.value = 0.9;
-                subbassWetGain.gain.value = 0;
-
-                warmthPreBp.type = "peaking";
-                warmthPreBp.frequency.value = 250;
-                warmthPreBp.Q.value = 1.0;
-                warmthPreBp.gain.value = 8;
-                warmthPreGain.gain.value = 1;
-                warmthExciter.curve = makeWarmthCurve();
-                warmthExciter.oversample = "4x";
-                warmthWetGain.gain.value = 0;
-
-                // Сухой проход
-                bassInputNode.connect(bassDryGain);
-                bassDryGain.connect(bassOutputNode);
-
-                // Ветка Subbass (октавный синтез)
-                bassInputNode.connect(subbassPreLp);
-                subbassPreLp.connect(subbassPreGain);
-                subbassPreGain.connect(subbassExciter);
-                subbassExciter.connect(subbassPostBp);
-                subbassPostBp.connect(subbassWetGain);
-                subbassWetGain.connect(bassOutputNode);
-
-                // Ветка Warmth (сатурация low-mid)
-                bassInputNode.connect(warmthPreBp);
-                warmthPreBp.connect(warmthPreGain);
-                warmthPreGain.connect(warmthExciter);
-                warmthExciter.connect(warmthWetGain);
-                warmthWetGain.connect(bassOutputNode);
+                bassChain = createBassChain(ctx);
 
                 // --- WET PATH (Сигнал идет через все эффекты) ---
                 reverbMergeNode.connect(distInputNode);
@@ -1082,8 +1365,9 @@
                 distDryGain.connect(distOutputNode);
                 distOutputNode.connect(delayInputNode);
                 delayInputNode.connect(delayOutputNode);
-                delayOutputNode.connect(bassInputNode);   // было: delayOutputNode.connect(defInputNode)
-                bassOutputNode.connect(defInputNode);     // новое
+
+                delayOutputNode.connect(bassChain.input), bassChain.output.connect(defInputNode);
+
                 defInputNode.connect(defDryGain);
                 defDryGain.connect(defOutputNode);
                 defInputNode.connect(defHpFilter);
@@ -1132,38 +1416,26 @@
                 limiterNode.connect(ctx.destination);
             }
 
-            const cspBlocksWasm = await isWasmBlockedByCSP();
 
-            if (!cspBlocksWasm) {
-                // На 99% сайтов мы пойдем сюда
-                try {
-                    const node = await setupSignalsmithWorklet(ctx);
-                    pitchNode = node;
-                    sourceGain.connect(pitchNode);
-                    pitchNode.connect(eqFilters[0]);
-                    activeProcessorType = 'signalsmith';
-                    isNodeReady = true;
-                    refreshPitchNode(true);
-                } catch (e) {
-                    // Фоллбэк, если Signalsmith завис по другой причине
-                    console.warn("[WS] Signalsmith failed, falling back to Correlator:", e.message);
-                    pitchNode = null;
-                    try {
-                        await setupCorrelatorWorklet(ctx);
-                    } catch (e2) {
-                        console.error("[WS] Correlator also failed:", e2.message);
-                        sourceGain.connect(eqFilters[0]);
-                    }
-                }
+            const isWasmBlocked = await isWasmBlockedByCSP();
+            if (isWasmBlocked) console.log("%c[WS] WebAssembly is restricted by CSP. Using fallback processor.", "color: #f0ad4e; font-weight: bold;");
+            const {
+                pitchNode: pNode,
+                correlatorNodes: corrNodes,
+                procType
+            } = await getOrCreatePitchProcessor("normal", ctx, !isWasmBlocked);
+            if (pNode) {
+                pitchNode = pNode;
+                correlatorNodes = "correlator" === procType ? corrNodes : null;
+                activeProcessorType = procType;
+                "signalsmith" === procType && sourceGain.connect(pitchNode);
+                "correlator" === procType && (sourceGain.connect(correlatorNodes.delay1), sourceGain.connect(correlatorNodes.delay2));
+                pitchNode.connect(eqFilters[0]);
+                isNodeReady = !0;
+                refreshPitchNode(!0)
             } else {
-                // На Reddit мы попадем ровно сюда. Ни единой красной строки.
-                console.log("%c[WS] WebAssembly is restricted by CSP. Using fallback processor.", "color: #f0ad4e; font-weight: bold;");
-                try {
-                    await setupCorrelatorWorklet(ctx);
-                } catch (e) {
-                    console.error("[WS] Correlator failed:", e.message);
-                    sourceGain.connect(eqFilters[0]);
-                }
+                console.error("[WS] Both pitch processors failed, bypassing pitch");
+                sourceGain.connect(eqFilters[0])
             }
         }
     }
@@ -1197,24 +1469,7 @@
     }
 
     function refreshStereo3dGraph() {
-        if (!audioCtx || !centerBoostGain || !widthBoostGain || !focusFilter) return;
-        const now = audioCtx.currentTime;
-
-        const widthM = (settings.stereoWidthMix || 0) / 100;
-
-        const widthGain = 1 + 1.0 * widthM;   // до ×2 — амплитудная часть (ILD)
-        widthBoostGain.gain.linearRampToValueAtTime(widthGain, now + 0.02);
-
-        const sideDelaySec = 0.009 * widthM;  // до ~9мс — Haas-эффект (ITD), основной вклад в ощущение "ширины"
-        sideDelayNode.delayTime.linearRampToValueAtTime(sideDelaySec, now + 0.02);
-
-        const centerM = (settings.stereoCenterMix || 0) / 100;
-        const centerGain = 1 + 0.8 * Math.pow(centerM, 1.2); // до ×1.8, консервативнее — M несёт и бас/кик
-        centerBoostGain.gain.linearRampToValueAtTime(centerGain, now + 0.02);
-
-        const focusM = (settings.stereoFocusMix || 0) / 100;
-        const focusDb = 9 * Math.pow(focusM, 0.9); // до +9dB на ~3.2кГц
-        focusFilter.gain.linearRampToValueAtTime(focusDb, now + 0.02);
+        updateStereo3dChain(stereo3dChain, settings, audioCtx);
     }
 
     function refreshCenterCancel() {
@@ -1249,13 +1504,11 @@
         usingHowler = true;
         bindResumeHandlers(howler.ctx);
         await ensurePitchGraph(howler.ctx);
-        if (!howlerAttached) howlerAttached = true;
-
-        routeHowler(false); // Используем правильный роутинг
+        // Принудительно переподключаем, даже если уже было подключено
+        routeHowler(false);
         syncHowlerSpeed();
-
         refreshAllNodes();
-
+        howlerAttached = true;
         return true;
     }
 
@@ -1754,10 +2007,160 @@
         var k = amount * 100, samples = 44100, curve = new Float32Array(samples);
         for (var i = 0; i < samples; i++) { var x = i * 2 / samples - 1; if (amount < 0.3) curve[i] = Math.tanh(x * (1 + k)); else if (amount < 0.7) curve[i] = (Math.PI + k) * x / (Math.PI + k * Math.abs(x)); else curve[i] = Math.max(-0.8, Math.min(0.8, (Math.PI + k) * x / (Math.PI + k * Math.abs(x)))) } return curve;
     }
+
     function makeBitcrusherCurve(bits) {
         var steps = Math.pow(2, bits), samples = 44100, curve = new Float32Array(samples);
         for (var i = 0; i < samples; i++) { var x = i * 2 / samples - 1; curve[i] = Math.round(x * steps) / steps } return curve;
     }
+
+    function createBassChain(ctx) {
+        const input = ctx.createGain();
+        const output = ctx.createGain();
+        const dry = ctx.createGain(); dry.gain.value = 1;
+
+        const subbassPreLp = ctx.createBiquadFilter();
+        subbassPreLp.type = "lowpass";
+        subbassPreLp.frequency.value = 150;
+        subbassPreLp.Q.value = 0.707;
+        const subbassPreGain = ctx.createGain(); subbassPreGain.gain.value = 1;
+        const subbassExciter = ctx.createWaveShaper();
+        subbassExciter.curve = makeSubbassCurve();
+        subbassExciter.oversample = "4x";
+        const subbassPostBp = ctx.createBiquadFilter();
+        subbassPostBp.type = "bandpass";
+        subbassPostBp.frequency.value = 200;
+        subbassPostBp.Q.value = 0.9;
+        const subbassWetGain = ctx.createGain(); subbassWetGain.gain.value = 0;
+
+        const warmthPreBp = ctx.createBiquadFilter();
+        warmthPreBp.type = "peaking";
+        warmthPreBp.frequency.value = 250;
+        warmthPreBp.Q.value = 1.0;
+        warmthPreBp.gain.value = 8;
+        const warmthPreGain = ctx.createGain(); warmthPreGain.gain.value = 1;
+        const warmthExciter = ctx.createWaveShaper();
+        warmthExciter.curve = makeWarmthCurve();
+        warmthExciter.oversample = "4x";
+        const warmthWetGain = ctx.createGain(); warmthWetGain.gain.value = 0;
+
+        input.connect(dry);
+        dry.connect(output);
+
+        input.connect(subbassPreLp);
+        subbassPreLp.connect(subbassPreGain);
+        subbassPreGain.connect(subbassExciter);
+        subbassExciter.connect(subbassPostBp);
+        subbassPostBp.connect(subbassWetGain);
+        subbassWetGain.connect(output);
+
+        input.connect(warmthPreBp);
+        warmthPreBp.connect(warmthPreGain);
+        warmthPreGain.connect(warmthExciter);
+        warmthExciter.connect(warmthWetGain);
+        warmthWetGain.connect(output);
+
+        return {
+            input, output, subbassPreGain, subbassWetGain, warmthPreGain, warmthWetGain,
+            dispose() {
+                [input, output, dry, subbassPreLp, subbassPreGain, subbassExciter, subbassPostBp, subbassWetGain,
+                    warmthPreBp, warmthPreGain, warmthExciter, warmthWetGain]
+                    .forEach(n => { try { n.disconnect() } catch (e) { } });
+            }
+        };
+    }
+
+    function updateBassChain(chain, pSet, ctx) {
+        if (!chain) return;
+        const now = ctx.currentTime;
+
+        const subM = (pSet.subbassMix || 0) / 100;
+        chain.subbassPreGain.gain.linearRampToValueAtTime(1 + 14 * Math.pow(subM, 1.3), now + 0.02);
+        chain.subbassWetGain.gain.linearRampToValueAtTime(0.85 * Math.pow(subM, 0.7), now + 0.02);
+
+        const warmM = (pSet.warmthMix || 0) / 100;
+        chain.warmthPreGain.gain.linearRampToValueAtTime(1 + 4 * Math.pow(warmM, 1.2), now + 0.02);
+        chain.warmthWetGain.gain.linearRampToValueAtTime(0.55 * Math.pow(warmM, 0.8), now + 0.02);
+    }
+
+    function createStereo3dChain(ctx) {
+        const splitter = ctx.createChannelSplitter(2);
+        const merger = ctx.createChannelMerger(2);
+
+        const encML = ctx.createGain(); encML.gain.value = 0.5;
+        const encMR = ctx.createGain(); encMR.gain.value = 0.5;
+        const encSL = ctx.createGain(); encSL.gain.value = 0.5;
+        const encSR = ctx.createGain(); encSR.gain.value = -0.5;
+
+        const midBus = ctx.createGain(); midBus.gain.value = 1;
+        const sideBus = ctx.createGain(); sideBus.gain.value = 1;
+        const sideDelay = ctx.createDelay(0.05);
+
+        const centerBoost = ctx.createGain(); centerBoost.gain.value = 1;
+        const widthBoost = ctx.createGain(); widthBoost.gain.value = 1;
+        const widthInv = ctx.createGain(); widthInv.gain.value = -1;
+
+        const focusFilter = ctx.createBiquadFilter();
+        focusFilter.type = "peaking";
+        focusFilter.frequency.value = 3200;
+        focusFilter.Q.value = 1.1;
+        focusFilter.gain.value = 0;
+
+        const output = ctx.createGain();
+
+        [encML, encMR, encSL, encSR, midBus, sideBus, sideDelay, centerBoost, widthBoost, widthInv]
+            .forEach(node => {
+                node.channelCount = 1;
+                node.channelCountMode = "explicit";
+                node.channelInterpretation = "discrete";
+            });
+
+        splitter.connect(encML, 0);
+        splitter.connect(encSL, 0);
+        splitter.connect(encMR, 1);
+        splitter.connect(encSR, 1);
+        encML.connect(midBus);
+        encMR.connect(midBus);
+        encSL.connect(sideBus);
+        encSR.connect(sideBus);
+
+        midBus.connect(centerBoost);
+        sideBus.connect(sideDelay);
+        sideDelay.connect(widthBoost);
+
+        centerBoost.connect(merger, 0, 0);
+        centerBoost.connect(merger, 0, 1);
+        widthBoost.connect(merger, 0, 0);
+        widthBoost.connect(widthInv);
+        widthInv.connect(merger, 0, 1);
+
+        merger.connect(focusFilter);
+        focusFilter.connect(output);
+
+        return {
+            input: splitter, output, centerBoost, widthBoost, sideDelay, focusFilter,
+            dispose() {
+                [splitter, merger, encML, encMR, encSL, encSR, midBus, sideBus, sideDelay,
+                    centerBoost, widthBoost, widthInv, focusFilter, output]
+                    .forEach(n => { try { n.disconnect() } catch (e) { } });
+            }
+        };
+    }
+
+    function updateStereo3dChain(chain, pSet, ctx) {
+        if (!chain) return;
+        const now = ctx.currentTime;
+
+        const widthM = (pSet.stereoWidthMix || 0) / 100;
+        chain.widthBoost.gain.linearRampToValueAtTime(1 + 1.0 * widthM, now + 0.02);
+        chain.sideDelay.delayTime.linearRampToValueAtTime(0.009 * widthM, now + 0.02);
+
+        const centerM = (pSet.stereoCenterMix || 0) / 100;
+        chain.centerBoost.gain.linearRampToValueAtTime(1 + 0.5 * centerM, now + 0.02);
+
+        const focusM = (pSet.stereoFocusMix || 0) / 100;
+        chain.focusFilter.gain.linearRampToValueAtTime(6 * focusM, now + 0.02);
+    }
+
     function getDistHash(layers) { return layers && layers.length ? layers.map(l => l.type).join('-') : ''; }
     async function createDistEffect(ctx, type, params) {
         var input = ctx.createGain();
@@ -1868,19 +2271,7 @@
 
     // Добавить рядом с refreshDefinitionGraph:
     function refreshBassGraph() {
-        if (!audioCtx || !bassInputNode || !bassOutputNode) return;
-
-        const subM = (settings.subbassMix || 0) / 100;
-        const subDrive = 1 + 14 * Math.pow(subM, 1.3);
-        const subWet = 0.85 * Math.pow(subM, 0.7);
-        subbassPreGain.gain.linearRampToValueAtTime(subDrive, audioCtx.currentTime + 0.02);
-        subbassWetGain.gain.linearRampToValueAtTime(subWet, audioCtx.currentTime + 0.02);
-
-        const warmM = (settings.warmthMix || 0) / 100;
-        const warmDrive = 1 + 4 * Math.pow(warmM, 1.2);
-        const warmWet = 0.55 * Math.pow(warmM, 0.8);
-        warmthPreGain.gain.linearRampToValueAtTime(warmDrive, audioCtx.currentTime + 0.02);
-        warmthWetGain.gain.linearRampToValueAtTime(warmWet, audioCtx.currentTime + 0.02);
+        updateBassChain(bassChain, settings, audioCtx);
     }
 
     function refreshDefinitionGraph() {
@@ -2360,36 +2751,65 @@
                 if (overlayMode) {
                     try { limiterNode?.disconnect(); } catch (e) { }
                     try { dolbyOutputNode?.disconnect(); } catch (e) { }
-                    await rebuildGraph();
+                    if (overlayMode) {
+                        // Перед переходом в Overlay очищаем обычный режим
+                        disposeNormalModeNodes();
+                        await rebuildGraph();
+                    }
                 } else {
-                    parallelChains.forEach(chain => {
-                        try { chain.pitchNode?.port?.close?.(); } catch (e) { }
-                        try { chain.pitchNode?.disconnect(); } catch (e) { }
-                        chain.eqs.forEach(f => { try { f.disconnect(); } catch (e) { } });
-                        try { chain.gain?.disconnect(); } catch (e) { }
-
-                        if (chain.correlatorNodes?.oscillators) {
-                            chain.correlatorNodes.oscillators.forEach(osc => { try { osc.stop(); } catch (e) { } });
-
-                            if (chain.modNodes) {
-                                chain.modNodes.forEach(n => {
-                                    if (n.oscillators) n.oscillators.forEach(osc => {
-                                        try {
-                                            osc.stop()
-                                        } catch (e) { }
-                                    })
-                                })
-                            }
-                        }
-                    });
+                    // ===== ВЫКЛЮЧЕНИЕ OVERLAY – ПОЛНАЯ ОЧИСТКА =====
+                    // 1. Удаляем все параллельные цепи (Overlay)
+                    parallelChains.forEach(chain => disposeChain(chain));
                     parallelChains = [];
-                    try { globalMergeNode?.disconnect(); globalCompressorNode?.disconnect(); globalLimiterNode?.disconnect(); globalStereoPannerNode?.disconnect(); } catch (e) { }
-                    pitchNode = null; eqFilters = []; isNodeReady = false;
-                    try { gainNode?.disconnect(); limiterNode?.disconnect(); } catch (e) { }
-                    gainNode = null; limiterNode = null;
-                    overlayGraphBuilt = false; // Сбрасываем флаг, чтобы стандартный граф мог собраться
-                    if (audioCtx) await ensurePitchGraph(audioCtx);
-                    refreshAllNodes();
+
+                    // 2. Отключаем глобальные узлы Overlay
+                    const globalNodes = [
+                        globalMergeNode, globalCompressorNode, globalStereoPannerNode,
+                        globalLimiterNode, globalDolbyInputNode, globalDolbyOutputNode,
+                        globalSurroundSplitter, globalSurroundMerger, globalSurroundCenterGain
+                    ];
+                    globalNodes.forEach(n => { try { n?.disconnect(); } catch (e) { } });
+                    globalMergeNode = null;
+                    globalCompressorNode = null;
+                    globalStereoPannerNode = null;
+                    globalLimiterNode = null;
+                    globalDolbyInputNode = null;
+                    globalDolbyOutputNode = null;
+                    globalSurroundSplitter = null;
+                    globalSurroundMerger = null;
+                    globalSurroundCenterGain = null;
+
+                    // 3. Отключаем Howler от sourceGain и перенаправляем напрямую в destination
+                    if (usingHowler && window.Howler?.masterGain) {
+                        try { window.Howler.masterGain.disconnect(sourceGain); } catch (e) { }
+                        try { window.Howler.masterGain.connect(audioCtx.destination); } catch (e) { }
+                        howlerAttached = false; // сбрасываем флаг, чтобы при следующем подключении перепривязалось
+                        usingHowler = false;    // временно отключаем флаг использования
+                    }
+
+                    // 4. Очищаем все узлы обычного режима
+                    disposeNormalModeNodes();
+
+                    // 5. Отключаем sourceGain от всего
+                    try { sourceGain?.disconnect(); } catch (e) { }
+
+                    // 6. Сбрасываем флаги
+                    overlayGraphBuilt = false;
+
+                    // 7. Перестраиваем обычный граф
+                    if (audioCtx) {
+                        await ensurePitchGraph(audioCtx);
+                        // После перестройки обновляем все настройки
+                        refreshAllNodes();
+                    }
+
+                    // 8. Если Howler был, восстанавливаем его подключение через новый граф
+                    if (window.Howler?.masterGain) {
+                        // Переподключаем Howler к новому sourceGain
+                        usingHowler = true;
+                        howlerAttached = false;
+                        await attachHowler(); // это переподключит Howler к текущему графу
+                    }
                 }
             } else if (overlayMode) {
                 // Структура пресетов та же, но поменялись значения (двигали ползунки).
@@ -2491,9 +2911,8 @@
                             try {
                                 if (siteIsBlacklisted) return;
                                 await attachHowler();
-                                syncHowlerSpeed();
-
-                                refreshAllNodes();
+                                // syncHowlerSpeed(); // вызовется внутри attachHowler
+                                // refreshAllNodes(); // убираем, так как attachHowler уже обновляет
                             } catch (e) { }
                         });
                         return result;
