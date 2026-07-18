@@ -380,7 +380,17 @@
                     chainDefLp.connect(chainDefWet);
                     chainDefWet.connect(chainDefOut);
 
-                    chainDefOut.connect(chainGain);
+                    const chainEffectsWet = audioCtx.createGain();
+                    const chainEffectsDry = audioCtx.createGain();
+                    const chainEffectsWetOnly = audioCtx.createGain();
+                    const chainEffectsDryInvert = audioCtx.createGain(); chainEffectsDryInvert.gain.value = -1;
+                    chainDefOut.connect(chainEffectsWetOnly);
+                    chainMerger.connect(chainEffectsDryInvert);
+                    chainEffectsDryInvert.connect(chainEffectsWetOnly);
+                    chainEffectsWetOnly.connect(chainEffectsWet);
+                    chainMerger.connect(chainEffectsDry);
+                    chainEffectsWet.connect(chainGain);
+                    chainEffectsDry.connect(chainGain);
                     chainGain.connect(globalMergeNode);
 
                     // Pitch shifting (без изменений)
@@ -415,6 +425,10 @@
                         wet: chainWet,
                         balance: chainBalance,
                         gain: chainGain,
+                        effectsWet: chainEffectsWet,
+                        effectsDry: chainEffectsDry,
+                        effectsWetOnly: chainEffectsWetOnly,
+                        effectsDryInvert: chainEffectsDryInvert,
                         settings: pSet,
                         lastBlockMs: null,
                         lastSmart: null,
@@ -503,11 +517,20 @@
         chain.dry = null;
         chain.wet = null;
 
-        // 7. Balance (StereoPanner) и Gain
-        try { chain.balance?.disconnect(); } catch (e) { }
-        try { chain.gain?.disconnect(); } catch (e) { }
-        chain.balance = null;
-        chain.gain = null;
+        // 7. Balance (StereoPanner), Gain и Effects mix
+        try { chain.balance?.disconnect() } catch (e) { }
+        try { chain.gain?.disconnect() } catch (e) { }
+        try { chain.effectsWet?.disconnect() } catch (e) { }
+        try { chain.effectsDry?.disconnect() } catch (e) { }
+        try { chain.effectsWetOnly?.disconnect() } catch (e) { }
+        try { chain.effectsDryInvert?.disconnect() } catch (e) { }
+
+        chain.balance = null,
+            chain.gain = null,
+            chain.effectsWet = null,
+            chain.effectsDry = null,
+            chain.effectsWetOnly = null,
+            chain.effectsDryInvert = null;
 
         // 8. Distortion
         try { chain.distIn?.disconnect(); } catch (e) { }
@@ -623,6 +646,7 @@
         chain.defLp = null;
         chain.defExciter = null;
         chain.modNodes = null;
+        chain._modEntryNode = null;
         chain.settings = null;
     }
 
@@ -684,13 +708,12 @@
 
         // 6. Отключаем все основные узлы обычного режима
         const nodes = [
-            gainNode, limiterNode, stereoSplitter, stereoMerger, stereo3dChain,
-            subLeftGain, subRightGain, convolverNode, dryGainNode, wetGainNode,
-            reverbMergeNode, compressorNode, stereoPannerNode, dolbyInputNode,
-            dolbyOutputNode, surroundSplitter, surroundMerger, surroundCenterGain,
-            distInputNode, distOutputNode, distDryGain, delayInputNode, delayOutputNode,
-            defInputNode, defOutputNode, defDryGain, defHpFilter, defPreGain,
-            defExciter, defLpFilter, defWetGain, bassChain, effectsWetNode, effectsDryNode,
+            gainNode, limiterNode, stereoSplitter, stereoMerger, stereo3dChain, subLeftGain, subRightGain,
+            convolverNode, dryGainNode, wetGainNode, reverbMergeNode, compressorNode, stereoPannerNode,
+            dolbyInputNode, dolbyOutputNode, surroundSplitter, surroundMerger, surroundCenterGain,
+            distInputNode, distOutputNode, distDryGain, delayInputNode, delayOutputNode, defInputNode,
+            defOutputNode, defDryGain, defHpFilter, defPreGain, defExciter, defLpFilter, defWetGain,
+            bassChain, effectsWetNode, effectsDryNode, effectsWetOnlyNode, effectsDryInvertNode,
             modulationInputNode, modulationOutputNode
         ];
         nodes.forEach(n => {
@@ -735,6 +758,8 @@
         bassChain = null;
         effectsWetNode = null;
         effectsDryNode = null;
+        effectsWetOnlyNode = null;
+        effectsDryInvertNode = null;
         modulationInputNode = null;
         modulationOutputNode = null;
         eqFilters = [];
@@ -792,28 +817,18 @@
                 chain.wet.gain.value = 0; // Глушим wet, чтобы избежать фленжера/эха от null buffer
                 chain.convolver.buffer = null;
             }
-            chain.balance.pan.value = (pSet.channelBalance || 0) / 100,
-                chain.gain.gain.value = Math.pow(10, (pSet.gainOutputDb || 0) / 20)
+
+            chain.balance.pan.value = (pSet.channelBalance || 0) / 100;
+            chain.gain.gain.value = Math.pow(10, (pSet.gainOutputDb || 0) / 20);
+            (() => {
+                const m = (pSet.effectsMix || 0) / 100;
+                chain.effectsWet && chain.effectsWet.gain.linearRampToValueAtTime(m, audioCtx.currentTime + .02);
+                chain.effectsDry && chain.effectsDry.gain.linearRampToValueAtTime(1 - m, audioCtx.currentTime + .02)
+            })();
+
             // --- Переключение модуляции ВНУТРИ цепи ---
-            if (chain.modNodes) {
+            if (chain.modNodes && chain.modNodes.length) {
                 chain.modNodes.forEach(function (n) {
-                    try { n.input.disconnect(); } catch (e) { }
-                    try { n.output.disconnect(); } catch (e) { }
-                    if (n.oscillators) {
-                        n.oscillators.forEach(function (osc) {
-                            try { osc.stop(); } catch (e) { }
-                        });
-                    }
-                });
-            }
-            chain.modNodes = [];
-
-            try { chain.balance.disconnect(chain.gain); } catch (e) { }
-
-            var cLayers = pSet.modulationLayers,
-                needsMod = !!(cLayers && cLayers.length > 0);
-            if (chain.modNodes && chain.modNodes.length > 0 || needsMod) {
-                chain.modNodes && chain.modNodes.forEach(function (n) {
                     try {
                         n.input.disconnect()
                     } catch (e) { }
@@ -825,38 +840,54 @@
                             osc.stop()
                         } catch (e) { }
                     })
-                }), chain.modNodes = [];
-                if (needsMod) {
-                    var cCurr = audioCtx.createGain();
-                    if (!chain._hasOvMod) {
+                })
+            }
+            chain.modNodes = [];
+
+            // снимаем связь balance -> старая точка входа модуляции, иначе при
+            // повторных добавлениях/удалениях слоёв копятся мёртвые "осиротевшие" узлы
+            if (chain._modEntryNode) {
+                try {
+                    chain.balance.disconnect(chain._modEntryNode)
+                } catch (e) { }
+                chain._modEntryNode = null
+            }
+
+            var cLayers = pSet.modulationLayers,
+                needsMod = !!(cLayers && cLayers.length > 0);
+
+            if (needsMod) {
+                var cCurr = audioCtx.createGain();
+                chain._modEntryNode = cCurr;
+                if (!chain._hasOvMod) {
+                    try {
+                        chain.balance.disconnect(chain.distIn)
+                    } catch (e) { }
+                    chain._hasOvMod = !0
+                }
+                chain.balance.connect(cCurr);
+                for (var mi = 0; mi < cLayers.length; mi++) {
+                    var mL = cLayers[mi];
+                    if (mL && mL.type) {
+                        var mEff;
                         try {
-                            chain.balance.disconnect(chain.distIn)
-                        } catch (e) { }
-                        chain._hasOvMod = !0
-                    }
-                    chain.balance.connect(cCurr);
-                    for (var mi = 0; mi < cLayers.length; mi++) {
-                        var mL = cLayers[mi];
-                        if (mL && mL.type) {
-                            var mEff;
-                            try {
-                                mEff = createModulationEffect(audioCtx, mL.type, mL.params || {})
-                            } catch (err) {
-                                console.error("[WS Overlay Mod]", err);
-                                continue
-                            }
-                            cCurr.connect(mEff.input), cCurr = mEff.output, chain.modNodes.push(mEff)
+                            mEff = createModulationEffect(audioCtx, mL.type, mL.params || {})
+                        } catch (err) {
+                            console.error("[WS Overlay Mod]", err);
+                            continue
                         }
-                    }
-                    cCurr.connect(chain.distIn)
-                } else {
-                    if (chain._hasOvMod) {
-                        try {
-                            chain.balance.disconnect(chain.distIn)
-                        } catch (e) { }
-                        chain.balance.connect(chain.distIn), chain._hasOvMod = !1
+                        cCurr.connect(mEff.input);
+                        cCurr = mEff.output;
+                        chain.modNodes.push(mEff)
                     }
                 }
+                cCurr.connect(chain.distIn)
+            } else if (chain._hasOvMod) {
+                try {
+                    chain.balance.disconnect(chain.distIn)
+                } catch (e) { }
+                chain.balance.connect(chain.distIn);
+                chain._hasOvMod = !1
             }
         });
         if (globalMergeNode) {
@@ -1064,11 +1095,10 @@
     let stereoSplitter, stereoMerger, subLeftGain, subRightGain, convolverNode, dryGainNode, wetGainNode, reverbMergeNode, stereoPannerNode, compressorNode, dolbyInputNode, dolbyOutputNode, surroundSplitter, surroundMerger, surroundCenterGain, modulationInputNode = null, modulationOutputNode = null, modulationLayersNodes = [], delayInputNode = null, delayOutputNode = null, delayNodes = null, distInputNode = null, distOutputNode = null, distDryGain = null, distNodes = null, lastDistType = null, defInputNode = null, defOutputNode = null, defDryGain = null,
         defHpFilter = null, defPreGain = null, defExciter = null,
         defLpFilter = null, defWetGain = null,
-
         // --- Bass (Subbass / Warmth) ---
         bassChain = null, stereo3dChain = null,
-
-        effectsWetNode = null, effectsDryNode = null;
+        effectsWetNode = null, effectsDryNode = null,
+        effectsWetOnlyNode = null, effectsDryInvertNode = null;
 
 
     const convolverCache = new Map;
@@ -1377,17 +1407,20 @@
                 defLpFilter.connect(defWetGain);
                 defWetGain.connect(defOutputNode);
 
-                // --- ТОЧКА СМЕШИВАНИЯ EFFECTS MIX ---
+
+                // --- ТОЧКА СМЕШИВАНИЯ EFFECTS MIX ---  
                 effectsWetNode = ctx.createGain();
                 effectsDryNode = ctx.createGain();
-
-                defOutputNode.connect(effectsWetNode);
+                effectsWetOnlyNode = ctx.createGain(); // = processed − dry
+                effectsDryInvertNode = ctx.createGain(); effectsDryInvertNode.gain.value = -1;
+                defOutputNode.connect(effectsWetOnlyNode);
+                stereoMerger.connect(effectsDryInvertNode);
+                effectsDryInvertNode.connect(effectsWetOnlyNode);
+                effectsWetOnlyNode.connect(effectsWetNode);
                 effectsWetNode.connect(compressorNode);
-
                 // --- DRY PATH (Чистый сигнал в обход ВСЕХ эффектов) ---
                 stereoMerger.connect(effectsDryNode);
                 effectsDryNode.connect(compressorNode);
-
                 // --- ВЫХОД ---
                 compressorNode.connect(gainNode);
                 gainNode.connect(stereoPannerNode);
