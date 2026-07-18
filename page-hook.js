@@ -257,7 +257,9 @@
                 }
             };
             connectGlobalEnd();
-            globalLimiterNode.connect(audioCtx.destination);
+
+            globalLimiterNode.connect(ensureAnalyser(audioCtx));
+            connectAnalyserToDestination(audioCtx);
 
             const isWasmBlocked = await isWasmBlockedByCSP();
 
@@ -1098,7 +1100,8 @@
         // --- Bass (Subbass / Warmth) ---
         bassChain = null, stereo3dChain = null,
         effectsWetNode = null, effectsDryNode = null,
-        effectsWetOnlyNode = null, effectsDryInvertNode = null;
+        effectsWetOnlyNode = null, effectsDryInvertNode = null,
+        analyserNode = null, analyserConnectedToDestination = !1, vizActive = !1, vizRafId = null, vizLastTime = 0, vizDataArray = null;
 
 
     const convolverCache = new Map;
@@ -1425,7 +1428,9 @@
                 compressorNode.connect(gainNode);
                 gainNode.connect(stereoPannerNode);
                 stereoPannerNode.connect(limiterNode);
-                limiterNode.connect(ctx.destination);
+                limiterNode.connect(ensureAnalyser(ctx));
+
+                connectAnalyserToDestination(ctx);
 
                 // --- ВНУТРЕННЯЯ МАРШРУТИЗАЦИЯ DOLBY ---
                 dolbyInputNode.connect(surroundSplitter);
@@ -1446,7 +1451,9 @@
                 limiterNode.attack.value = 0.003; limiterNode.release.value = 0.25;
                 eqFilters[eqFilters.length - 1].connect(gainNode);
                 gainNode.connect(limiterNode);
-                limiterNode.connect(ctx.destination);
+                limiterNode.connect(ensureAnalyser(ctx));
+                connectAnalyserToDestination(ctx);
+
             }
 
 
@@ -2044,6 +2051,58 @@
     function makeBitcrusherCurve(bits) {
         var steps = Math.pow(2, bits), samples = 44100, curve = new Float32Array(samples);
         for (var i = 0; i < samples; i++) { var x = i * 2 / samples - 1; curve[i] = Math.round(x * steps) / steps } return curve;
+    }
+
+    function ensureAnalyser(ctx) {
+        if (analyserNode && analyserNode.context === ctx) return analyserNode;
+        try { analyserNode?.disconnect() } catch (e) { }
+        analyserNode = ctx.createAnalyser();
+        analyserNode.fftSize = 2048;
+        analyserNode.smoothingTimeConstant = .75;
+        analyserConnectedToDestination = !1;
+        maybeStartVizLoop();
+        return analyserNode;
+    }
+
+    function connectAnalyserToDestination(ctx) {
+        if (analyserConnectedToDestination) return;
+        try { analyserNode.connect(ctx.destination); analyserConnectedToDestination = !0 } catch (e) { }
+    }
+
+    function maybeStartVizLoop() {
+        if (!vizActive || !analyserNode || vizRafId) return;
+        vizRafId = requestAnimationFrame(vizFrame);
+    }
+
+    // Усредняю несколько соседних бинов вокруг частоты полосы, а не беру один
+    // ближайший бин — иначе на низких частотах (где разрешение FFT грубое)
+    // столбики дрожат и шумят сильнее, чем реально меняется звук.
+    function computeBandLevel(dataArray, freq, nyquist, binWidth) {
+        const idxCenter = freq / nyquist * dataArray.length;
+        const spread = Math.max(1, Math.round(freq * .15 / binWidth));
+        const lo = Math.max(0, Math.round(idxCenter - spread));
+        const hi = Math.min(dataArray.length - 1, Math.round(idxCenter + spread));
+        let sum = 0, count = 0;
+        for (let i = lo; i <= hi; i++) { sum += dataArray[i]; count++ }
+        return count ? (sum / count) / 255 : 0;
+    }
+
+    function vizFrame(now) {
+        if (!vizActive || !analyserNode) { vizRafId = null; return }
+        // Троттлинг до ~22 fps — картинка визуально плавная, но втрое меньше
+        // сообщений через границу page→content→popup по сравнению с честными 60fps.
+        if (now - vizLastTime >= 45) {
+            vizLastTime = now;
+            if (!vizDataArray || vizDataArray.length !== analyserNode.frequencyBinCount) {
+                vizDataArray = new Uint8Array(analyserNode.frequencyBinCount);
+            }
+            analyserNode.getByteFrequencyData(vizDataArray);
+            const nyquist = (audioCtx?.sampleRate || 44100) / 2;
+            const binWidth = nyquist / vizDataArray.length;
+            const levels = EQ_BANDS.map(band => computeBandLevel(vizDataArray, band.frequency, nyquist, binWidth));
+            try { window.postMessage({ type: "WS_VIZ_DATA", levels }, "*") } catch (e) { }
+        }
+        vizRafId = requestAnimationFrame(vizFrame);
     }
 
     function createBassChain(ctx) {
@@ -2858,6 +2917,18 @@
             } else {
                 refreshAllNodes();
             }
+        }
+    });
+
+    // Отдельный, независимый от основного PITCH_UPDATE листенер — не трогаю
+    // огромный существующий обработчик сообщений.
+    window.addEventListener("message", e => {
+        if (e.source !== window) return;
+        if (e.data?.type !== "WS_VIZ_CONTROL") return;
+        if ("start" === e.data.command) { vizActive = !0; maybeStartVizLoop() }
+        else if ("stop" === e.data.command) {
+            vizActive = !1;
+            if (vizRafId) { cancelAnimationFrame(vizRafId); vizRafId = null }
         }
     });
 

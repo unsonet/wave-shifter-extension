@@ -11,11 +11,14 @@ Unlike simple playback-rate controls, Wave Shifter can shift pitch independently
 - ⚡ Playback speed control
 - 🎼 Optional pitch preservation when changing playback speed
 - 🔊 Volume boost
+- 🎚 Effects Mix control (balance between processed and original sound)
+- 📊 Built-in real-time frequency visualizer in the equalizer
 - 🎚 10-band equalizer
-- 🌊 Reverb with multiple room presets (Ambience, Chamber, Hall, Plate, Space)
-- 🎛 Adjustable reverb depth
-- 🎧 Stereo widener
+- 🌐 SRS WOW-inspired stereo processing (Stereo Width, Center, Focus)
+- 🔈 SRS TruBass-inspired enhancement (Subbass & Warmth)
 - ⚖ Stereo channel balance control
+- ✨ Clarity / Definition enhancement
+- 🔀 Overlay Mode with independent preset volume control
 - 🎚 Dynamic range compressor with configurable threshold, knee, ratio, attack and release
 - 🎸 Lo-Fi effects (Distortion, Bitcrusher, CD Skipper, Vinyl) with layer-based routing and mix control
 - ⏱ Stereo ping-pong delay with time, feedback, and mix controls
@@ -132,23 +135,27 @@ Keeps the original pitch while changing playback speed.
 
 When disabled, changing speed will affect pitch naturally, similar to tape playback.
 
-### Volume Boost
+### Gain & Effects Mix
 
-Applies additional gain after audio processing.
-
-Useful for quiet recordings or content with low output volume.
+- **Output Gain**: Applies additional volume boost after audio processing. Useful for quiet recordings or content with low output volume.
+- **Effects Mix**: Controls the balance between the fully processed audio (wet) and the original, unprocessed audio (dry). At 100%, only the processed signal is heard. At 0%, the effects are bypassed entirely.
 
 ### Equalizer
 
 Wave Shifter includes a 10-band graphic equalizer covering the full audible frequency range.
-
 Each band can be adjusted independently to tailor the sound to your preferences.
+Additionally, the equalizer includes a built-in real-time frequency visualizer. This visual aid helps you identify which frequencies are most prominent in the current audio, making it easier to make precise EQ adjustments.
 
-### Spatial Processing
+### Stereo Processing (SRS WOW Inspired)
 
-Wave Shifter provides several spatial audio effects.
+Wave Shifter features an advanced stereo processing suite that interprets and expands upon classic SRS WOW technologies (incorporating elements of SRS 3D).
 
-#### Reverb
+- **Stereo Width (SRS 3D)**: Expands the stereo image by manipulating the side channels, creating a much wider and more immersive soundstage outside the physical boundaries of the speakers or headphones.
+- **Stereo Center**: Adjusts the volume of the mono center image. Increasing this brings centrally panned elements (like lead vocals or snare drums) forward, while decreasing it pushes them back.
+- **Stereo Focus**: Boosts upper-midrange frequencies (around 3kHz) in the center image to improve vocal clarity and intelligibility without harshness.
+- **Channel Balance**: Adjusts the overall balance between the left and right audio channels.
+
+### Reverb
 
 Adds room ambience using convolution reverb.
 
@@ -164,13 +171,6 @@ Available presets include:
 
 Controls the wet/dry mix of the selected reverb.
 
-#### Stereo Widener
-
-Expands the stereo image by increasing the perceived width of the audio.
-
-#### Channel Balance
-
-Adjusts the balance between the left and right audio channels.
 
 ### Dynamics
 
@@ -211,6 +211,20 @@ Available controls:
 
 The delay alternates between the left and right channels to create a wide, spatial echo effect.
 
+### Bass
+
+Wave Shifter includes tools for enhancing and shaping the low-end frequencies.
+
+- **Subbass**: Generates harmonic sub-bass frequencies below the natural low-end of the audio. This adds a deep, physical rumble to the sound without muddying the mix.
+- **Warmth**: Adds subtle even harmonics to the low-mid frequencies. This makes thin or digital audio sound thicker, fuller, and more analog.
+
+### Clarity
+
+Enhances the presence and detail of the audio.
+
+- **Definition**: Uses harmonic excitation to add brightness and detail to high frequencies. Unlike a standard high-shelf EQ, Definition adds new harmonics to make the mix sound clearer and more articulate, helping it cut through on smaller speakers or in noisy environments.
+
+
 ### Modulation
 
 Wave Shifter provides 10 modulation effects that can be chained together in any order using a layer-based system.
@@ -230,6 +244,11 @@ Available effects:
 
 Each layer has independent parameters such as rate, depth, and effect-specific options. Layers are processed in the order they are added.
 
+### Overlay Mode
+
+Overlay Mode allows you to run multiple audio processing presets simultaneously on the same audio source, blending their outputs together.
+
+- **Independent Volume**: When Overlay Mode is active, the Output Gain (volume) of each selected preset in the chain can be adjusted independently. This allows for complex layering, such as combining a heavily distorted preset at a low volume with a clean, wide-stereo preset at a high volume.
 
 
 ### Surround
@@ -253,7 +272,9 @@ The processing pipeline may include:
 - Modulation effects
 - Delay
 - Reverb
-- Stereo widening
+- SRS WOW-inspired stereo processing (Width, Center, Focus)
+- SRS TruBass-Bass enhancement (Subbass & Warmth)
+- Clarity / Definition excitation
 - Dynamic compression
 - Surround upmix
 - Volume adjustment

@@ -531,7 +531,6 @@ details>.control:last-child {
 
 /*end footer*/
 /*eq*/
-
 .range-slider {
   position: relative;
 }
@@ -625,11 +624,8 @@ details>.control:last-child {
 }
 
 .range-slider[style*="horizontal"] .range-slider__bar {
-  top: 50%;
-  left: 0;
-  height: var(--rs-track-thickness);
-  /* Умножаем 100% ширины на число от 0 до 1 */
-  width: calc(var(--pct) * 100%);
+  top: 50%; left: 0; height: var(--rs-track-thickness);
+  width: calc(var(--bar-pct, var(--pct)) * 100%);
   transform: translateY(-50%);
 }
 
@@ -669,11 +665,8 @@ details>.control:last-child {
 }
 
 .range-slider[style*="vertical"] .range-slider__bar {
-  left: 50%;
-  bottom: var(--rs-legend-bottom-size);
-  width: var(--rs-track-thickness);
-  /* Умножаем доступную высоту (100% минус 20px) на число от 0 до 1 */
-  height: calc(var(--pct) * (100% - var(--rs-legend-bottom-size) - var(--rs-legend-top-size) ));
+  left: 50%; bottom: var(--rs-legend-bottom-size); width: var(--rs-track-thickness);
+  height: calc(var(--bar-pct, var(--pct)) * (100% - var(--rs-legend-bottom-size) - var(--rs-legend-top-size) ));
   transform: translateX(-50%);
 }
 
@@ -739,7 +732,7 @@ select {
 
 .eq-container {
   position: relative;
-  height: 130px;
+  height: 150px;
   display: flex;
   justify-content: space-between;
   padding: 0 2px;
@@ -749,7 +742,7 @@ select {
   --rs-legend-bottom-size: 0px;
   --rs-legend-top-size: 0px;
   position: absolute;
-  top: 0;
+  top: var(--rs-legend-top-size);
   left: 0;
   width: 100%;
   height: calc(100% - var(--rs-legend-bottom-size) - var(--rs-legend-top-size));

@@ -7,6 +7,7 @@ const simpleModal = globalThis['simpleModal'];
     };
     let userDisabledCustomInOverlay = !1;
     let suppressCustomSync = !1;
+    let vizPort = null, vizElementsCache = null;
 
     const DEFAULT_SETTINGS = {
         pitchValueSemitones: 0,
@@ -47,7 +48,8 @@ const simpleModal = globalThis['simpleModal'];
         overlayEnabled: !1,
         overlayPresets: [],
         globalPresets: {},
-        modulationLayers: []
+        modulationLayers: [],
+        enableVisualization: !0,
     };
 
     // Схема описывает, какие слайдеры есть у каждого типа модуляции.
@@ -135,7 +137,8 @@ const simpleModal = globalThis['simpleModal'];
         },
         '#eqSettingsPanel': {
             eqGains: [...DEFAULT_SETTINGS.eqGains],
-            eqPreset: DEFAULT_SETTINGS.eqPreset
+            eqPreset: DEFAULT_SETTINGS.eqPreset,
+            enableVisualization: DEFAULT_SETTINGS.enableVisualization
         },
 
         "#stereoPanel": {
@@ -193,8 +196,14 @@ const simpleModal = globalThis['simpleModal'];
     const speedFineVal = document.getElementById("speedFineVal");
     const resetBtn = document.getElementById("resetBtn");
     const eqPresetSelect = document.getElementById("eqPreset");
+    const eqPresetManageBtn = document.getElementById("eqPresetManageBtn");
+    const eqPresetNameInput = document.getElementById("eqPresetNameInput");
+    const eqPresetGenresInput = document.getElementById("eqPresetGenresInput");
+    const eqPresetAddBtn = document.getElementById("eqPresetAddBtn");
+    const eqPresetList = document.getElementById("eqPresetList");
     const eqSvgLine = document.querySelector(".eq-svg-line");
     const eqSvgLineShadow = document.querySelector(".eq-svg-line-shadow");
+    const enableVisualizationCheck = document.getElementById("enableVisualization");
     const blacklistBtn = document.getElementById("blacklistBtn");
     const blacklistInput = document.getElementById("blacklistInput");
     const blacklistAddBtn = document.getElementById("blacklistAddBtn");
@@ -210,12 +219,6 @@ const simpleModal = globalThis['simpleModal'];
     const effectsMixSlider = document.getElementById("effectsMix");
     const effectsMixVal = document.getElementById("effectsMixVal");
     const gainPanel = document.getElementById("gainPanel");
-    const eqPresetManageBtn = document.getElementById("eqPresetManageBtn");
-
-    const eqPresetNameInput = document.getElementById("eqPresetNameInput");
-    const eqPresetGenresInput = document.getElementById("eqPresetGenresInput");
-    const eqPresetAddBtn = document.getElementById("eqPresetAddBtn");
-    const eqPresetList = document.getElementById("eqPresetList");
     const optimisationDelayCheck = document.getElementById("optimisationDelay");
     const stereoPanel = document.getElementById("stereoPanel"),
         reverbPanel = document.getElementById("reverbPanel"),
@@ -860,8 +863,8 @@ const simpleModal = globalThis['simpleModal'];
                 input.value = currentSettings.eqGains[i];
                 syncVisualSlider(input);
             });
-            updateEqualizerGraph();
-            updateEqPresetSelectUI();
+            updateEqualizerGraph(), updateEqPresetSelectUI();
+            document.querySelectorAll("#eqSettingsPanel .eq-container .range-slider").forEach((w, i) => updateEqLegend(i, currentSettings.eqGains[i]))
         }
     }
 
@@ -1003,6 +1006,7 @@ const simpleModal = globalThis['simpleModal'];
             compressorReleaseVal.textContent = currentSettings.compressorRelease + " ms",
             dolbyEnabledCheck.checked = currentSettings.dolbyEnabled,
             optimisationDelayCheck.checked = currentSettings.optimisationDelay || !1,
+            enableVisualizationCheck.checked = currentSettings.enableVisualization !== !1,
             overlayCheck.checked = currentSettings.overlayEnabled || !1,
             globalPresetSelect.multiple = overlayCheck.checked
         // Восстанавливаем выделение в мультиселекте при загрузке
@@ -1019,13 +1023,78 @@ const simpleModal = globalThis['simpleModal'];
             }
             input.value = targetVal;
             syncVisualSlider(input);
+            updateEqLegend(i, targetVal);
         });
 
         document.querySelectorAll(".range-slider input").forEach(syncVisualSlider);
-        updateEqualizerGraph(), updateEqPresetSelectUI(), updateSectionResetIcons(), renderModulationLayers();
+        updateEqualizerGraph(), updateEqPresetSelectUI(), updateSectionResetIcons(), renderModulationLayers(),
+            currentSettings.enableVisualization !== !1 ? startVisualization() : stopVisualization()
     }
 
     function formatDb(val) { return val > 0 ? `+${val} dB` : `${val} dB`; }
+
+    function updateEqLegend(index, val) {
+        const wrapper = document.querySelectorAll("#eqSettingsPanel .eq-container .range-slider")[index];
+        if (!wrapper) return;
+        const legend = wrapper.querySelector(".range-slider__legend-top");
+        if (!legend) return;
+        const db = Math.round((val - 50) / 5);
+        legend.textContent = db > 0 ? `+${db}` : `${db}`;
+    }
+
+    function getEqBarElements() {
+        return vizElementsCache || (vizElementsCache = Array.from(document.querySelectorAll("#eqSettingsPanel .eq-container .range-slider")))
+    }
+
+    function applyVizLevels(levels) {
+        const wrappers = getEqBarElements();
+        levels.forEach((lvl, i) => { wrappers[i] && wrappers[i].style.setProperty("--bar-pct", Math.max(0, Math.min(1, lvl))) })
+    }
+
+    function clearVizLevels() {
+        getEqBarElements().forEach(w => w.style.removeProperty("--bar-pct"))
+    }
+
+    function startVisualization() {
+        if (vizPort) return;
+        chrome.tabs.query({ active: !0, currentWindow: !0 }).then(([tab]) => {
+            if (!tab?.id) return;
+
+            try {
+                vizPort = chrome.tabs.connect(tab.id, { name: "ws-eq-viz" });
+
+                // ПРОВЕРКА: Если не удалось подключиться (например, это chrome:// страница),
+                // chrome устанавливает lastError. Мы проверяем это, чтобы избежать ошибки в консоли.
+                if (chrome.runtime.lastError) {
+                    // console.log("Viz connect skipped:", chrome.runtime.lastError.message);
+                    vizPort = null;
+                    return;
+                }
+
+                vizPort.onMessage.addListener(msg => {
+                    if (msg?.type === "WS_VIZ_DATA") {
+                        const wrappers = getEqBarElements();
+                        msg.levels.forEach((lvl, i) => {
+                            if (wrappers[i]) wrappers[i].style.setProperty("--bar-pct", Math.max(0, Math.min(1, lvl)));
+                        });
+                    }
+                });
+
+                vizPort.onDisconnect.addListener(() => {
+                    vizPort = null;
+                });
+
+                vizPort.postMessage({ command: "start" });
+            } catch (e) {
+                vizPort = null;
+            }
+        });
+    }
+
+    function stopVisualization() {
+        if (vizPort) { try { vizPort.postMessage({ command: "stop" }) } catch (e) { } try { vizPort.disconnect() } catch (e) { } vizPort = null }
+        clearVizLevels()
+    }
 
     function updateDistSubUI(type) {
         document.querySelectorAll('.dist-sub').forEach(el => {
@@ -1286,11 +1355,18 @@ const simpleModal = globalThis['simpleModal'];
 
             if (e.target.orient === "vertical" || e.target.getAttribute("orient") === "vertical") {
                 const index = Array.from(document.querySelectorAll('.range-slider[style*="vertical"] input')).indexOf(e.target);
-                if (index !== -1) {
+                if (index < currentSettings.eqGains.length) {
                     currentSettings.eqGains[index] = val;
                     currentSettings.eqPreset = "custom";
-                    currentSettings.eqPresets = { ...(currentSettings.eqPresets || {}), custom: { name: "Custom", genres: [], values: [...currentSettings.eqGains] } };
-                    updateEqualizerGraph(); updateEqPresetSelectUI();
+                    currentSettings.eqPresets = {
+                        ...currentSettings.eqPresets || {},
+                        custom: {
+                            name: "Custom",
+                            genres: [],
+                            values: [...currentSettings.eqGains]
+                        }
+                    };
+                    updateEqualizerGraph(); updateEqPresetSelectUI(); updateEqLegend(index, val);
                 }
             }
             updateSectionResetIcons(), switchToCustomIfNeeded(), scheduleApply();
@@ -1320,6 +1396,13 @@ const simpleModal = globalThis['simpleModal'];
     });
 
     eqPresetSelect.addEventListener("change", e => { applyEqPresetToUI(e.target.value), updateSectionResetIcons(), switchToCustomIfNeeded(), scheduleApply() })
+
+    enableVisualizationCheck.addEventListener("change", e => {
+        currentSettings.enableVisualization = e.target.checked;
+        e.target.checked ? startVisualization() : stopVisualization();
+        scheduleApply()
+    });
+
     resetBtn.addEventListener("click", async () => {
         // 1. СОХРАНЯЕМ пользовательские пресеты в безопасное место ДО сброса
         const savedUserPresets = JSON.parse(JSON.stringify(currentSettings.globalPresets || {}));

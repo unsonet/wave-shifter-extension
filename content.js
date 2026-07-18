@@ -121,24 +121,24 @@
       pitchValueCents: 0,
       windowSizeMilliseconds: 120,
       applySmartProcessing: !0,
-      gainOutputDb: 0, 
-      gainInputDb: 0, 
-      eqGains: Array(10).fill(50), 
-      reverbType: null, 
-      reverbWet: 0, 
-      centerCancel: 0, 
-      channelBalance: 0, 
-      modulationLayers: [], 
-      distortionLayers: [], 
-      distMix: 0, 
-      delayTime: 250, 
-      delayFeedback: 40, 
-      delayMix: 0, 
-      definitionMix: 0, 
-      stereoWidthMix: 0, 
-      stereoCenterMix: 0, 
-      stereoFocusMix: 0, 
-      subbassMix: 0, 
+      gainOutputDb: 0,
+      gainInputDb: 0,
+      eqGains: Array(10).fill(50),
+      reverbType: null,
+      reverbWet: 0,
+      centerCancel: 0,
+      channelBalance: 0,
+      modulationLayers: [],
+      distortionLayers: [],
+      distMix: 0,
+      delayTime: 250,
+      delayFeedback: 40,
+      delayMix: 0,
+      definitionMix: 0,
+      stereoWidthMix: 0,
+      stereoCenterMix: 0,
+      stereoFocusMix: 0,
+      subbassMix: 0,
       warmthMix: 0
     };
 
@@ -175,4 +175,25 @@
     overlayPresets: initialOverlayPresets,
     overlayConfig: { MAX_OVERLAY_CHAINS: 10, MAX_SIGNALSMITH_CHAINS: 2 }
   }, "*")
+
+  // Добавить как отдельную конструкцию верхнего уровня файла, ПОСЛЕ основной IIFE:
+  chrome.runtime.onConnect.addListener(port => {
+    if (port.name !== "ws-eq-viz") return;
+    const onWindowMessage = e => {
+      if (e.source !== window) return;
+      if (e.data?.type === "WS_VIZ_DATA") {
+        try { port.postMessage(e.data) } catch (err) { }
+      }
+    };
+    window.addEventListener("message", onWindowMessage);
+    port.onMessage.addListener(msg => {
+      if (msg?.command === "start") window.postMessage({ type: "WS_VIZ_CONTROL", command: "start" }, "*");
+      else if (msg?.command === "stop") window.postMessage({ type: "WS_VIZ_CONTROL", command: "stop" }, "*");
+    });
+    port.onDisconnect.addListener(() => {
+      window.removeEventListener("message", onWindowMessage);
+      window.postMessage({ type: "WS_VIZ_CONTROL", command: "stop" }, "*");
+    });
+  });
+
 })();
