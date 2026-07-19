@@ -1057,33 +1057,36 @@ const simpleModal = globalThis['simpleModal'];
 
     function startVisualization() {
         if (vizPort) return;
-        chrome.tabs.query({ active: !0, currentWindow: !0 }).then(([tab]) => {
+
+        chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
             if (!tab?.id) return;
 
-            try {
-                vizPort = chrome.tabs.connect(tab.id, { name: "ws-eq-viz" });
+            vizPort = chrome.tabs.connect(tab.id, { name: "ws-eq-viz" });
 
-                // ПРОВЕРКА: Если не удалось подключиться (например, это chrome:// страница),
-                // chrome устанавливает lastError. Мы проверяем это, чтобы избежать ошибки в консоли.
+            vizPort.onMessage.addListener(msg => {
+                if (msg?.type === "WS_VIZ_DATA") {
+                    const wrappers = getEqBarElements();
+
+                    msg.levels.forEach((lvl, i) => {
+                        if (wrappers[i]) {
+                            wrappers[i].style.setProperty(
+                                "--bar-pct",
+                                Math.max(0, Math.min(1, lvl))
+                            );
+                        }
+                    });
+                }
+            });
+
+            vizPort.onDisconnect.addListener(() => {
                 if (chrome.runtime.lastError) {
-                    // console.log("Viz connect skipped:", chrome.runtime.lastError.message);
-                    vizPort = null;
-                    return;
+                    console.log("Viz connect failed:", chrome.runtime.lastError.message);
                 }
 
-                vizPort.onMessage.addListener(msg => {
-                    if (msg?.type === "WS_VIZ_DATA") {
-                        const wrappers = getEqBarElements();
-                        msg.levels.forEach((lvl, i) => {
-                            if (wrappers[i]) wrappers[i].style.setProperty("--bar-pct", Math.max(0, Math.min(1, lvl)));
-                        });
-                    }
-                });
+                vizPort = null;
+            });
 
-                vizPort.onDisconnect.addListener(() => {
-                    vizPort = null;
-                });
-
+            try {
                 vizPort.postMessage({ command: "start" });
             } catch (e) {
                 vizPort = null;

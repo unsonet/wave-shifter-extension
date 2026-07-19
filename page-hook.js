@@ -2674,7 +2674,7 @@
                         source = audioCtx.createMediaElementSource(mediaEl);
                     } catch (e) {
                         if (e.name === "InvalidStateError") {
-                            console.warn("[WS] Элемент уже захвачен этим AudioContext. Пропускаем пере-захват.");
+                            console.log("[WS] Элемент уже захвачен этим AudioContext. Пропускаем пере-захват.");
                             mediaEl.__pitchConnected = true;
                             return; // Просто выходим, чтобы не крашить страницу
                         }
@@ -2747,7 +2747,7 @@
         if (e.source !== window) return;
         const data = e.data;
         if (!data || data.type !== "PITCH_UPDATE") return;
-
+   
         settings = { ...settings, ...(data.settings || {}) };
 
         let isNowBlacklisted = false;
@@ -2817,9 +2817,11 @@
         if (!siteIsBlacklisted) {
             // Reconnect processing chain to destination (reversing bypass)
             if (overlayMode) {
-                try { globalLimiterNode?.connect(audioCtx.destination) } catch (e) { }
+                try { globalLimiterNode?.connect(ensureAnalyser(audioCtx)) } catch (e) { }
+                connectAnalyserToDestination(audioCtx);
             } else if (limiterNode) {
-                try { limiterNode?.connect(audioCtx.destination) } catch (e) { }
+                try { limiterNode?.connect(ensureAnalyser(audioCtx)) } catch (e) { }
+                connectAnalyserToDestination(audioCtx);
             }
             usingHowler ? syncHowlerSpeed() : connectedMediaElements.forEach(el => applySpeedSettings(el));
             const mediaElements = Array.from(document.querySelectorAll("audio, video"));
