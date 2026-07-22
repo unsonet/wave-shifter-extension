@@ -20,6 +20,7 @@
     let overlayGraphBuilt = false; // Флаг, чтобы не перестраивать граф для каждого нового audio тега
     let rebuildCancelToken = 0;
     let pitchProcessorPool = new Map();
+    const EQ_DB_RANGE = 10;
 
     // ИНИЦИАЛИЗАЦИЯ ОВЕРЛЕЯ ПРИ ЗАГРУЗКЕ (Решает проблему Race Condition)
     try {
@@ -414,6 +415,10 @@
                         sourceGain.connect(chainEqs[0]);
                     }
 
+                    // Важно: возвращаем прямую дорожку для Bypass, 
+                    // так как выше sourceGain.disconnect() её оборвал
+                    if (bypassNode) sourceGain.connect(bypassNode);
+
                     parallelChains.push({
                         pitchNode,
                         eqs: chainEqs,
@@ -465,6 +470,8 @@
             if (parallelChains.length === 0) {
                 sourceGain.connect(globalMergeNode);
             }
+
+            if (bypassNode) sourceGain.connect(bypassNode);
             refreshOverlayNodes();
             overlayGraphBuilt = true;
 
@@ -798,7 +805,7 @@
                 if (factor === 1) { chain.correlatorNodes.freqSrc.offset.value = 0; chain.correlatorNodes.wss.offset.value = 0; }
                 else { chain.correlatorNodes.freqSrc.offset.value = 1.17915 / windowSec * (1 - factor); chain.correlatorNodes.wss.offset.value = windowSec; }
             }
-            const gains = pSet.eqGains || Array(10).fill(50); chain.eqs.forEach((f, i) => { f.gain.value = (gains[i] - 50) / 5; });
+            const gains = pSet.eqGains || Array(10).fill(50); chain.eqs.forEach((f, i) => { f.gain.value = (gains[i] - 50) * EQ_DB_RANGE / 50 });
             const centerCancelVal = -(pSet.centerCancel || 0) / 100;
             chain.subL.gain.value = centerCancelVal;
             chain.subR.gain.value = centerCancelVal;
@@ -1092,7 +1099,7 @@
     let activeProcessorType = null; // 'signalsmith' | 'correlator'
     let correlatorNodes = null; // Храним узлы осцилляторов для коррелятора
 
-    let howlerProbeTimer = null, usingHowler = false, howlerAttached = false, siteIsBlacklisted = false;
+    let howlerProbeTimer = null, usingHowler = false, howlerAttached = false, siteIsBlacklisted = false, bypassNode = null;
     const connectedMediaElements = new Set, connectingMediaElements = new WeakSet;
     let stereoSplitter, stereoMerger, subLeftGain, subRightGain, convolverNode, dryGainNode, wetGainNode, reverbMergeNode, stereoPannerNode, compressorNode, dolbyInputNode, dolbyOutputNode, surroundSplitter, surroundMerger, surroundCenterGain, modulationInputNode = null, modulationOutputNode = null, modulationLayersNodes = [], delayInputNode = null, delayOutputNode = null, delayNodes = null, distInputNode = null, distOutputNode = null, distDryGain = null, distNodes = null, lastDistType = null, defInputNode = null, defOutputNode = null, defDryGain = null,
         defHpFilter = null, defPreGain = null, defExciter = null,
@@ -1134,6 +1141,19 @@
         window.addEventListener("click", unlock, { capture: true });
         window.addEventListener("keydown", unlock, { capture: true });
         window.addEventListener("touchstart", unlock, { capture: true });
+    }
+
+    function ensureBypassNode(ctx) {
+        if (!bypassNode || bypassNode.context !== ctx) {
+            if (bypassNode) {
+                try { bypassNode.disconnect(); } catch (e) { }
+            }
+            bypassNode = ctx.createGain();
+            bypassNode.gain.setValueAtTime(0, ctx.currentTime);
+            sourceGain.connect(bypassNode);
+            bypassNode.connect(ctx.destination);
+        }
+
     }
 
     // --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ CORRELATOR ---
@@ -1283,6 +1303,7 @@
                 audioCtx = ctx;
                 if (!sourceGain) sourceGain = ctx.createGain();
                 bindResumeHandlers(ctx);
+                ensureBypassNode(ctx);
                 await rebuildGraph();
             } else {
                 bindResumeHandlers(ctx);
@@ -1301,6 +1322,8 @@
 
         audioCtx = ctx;
         if (!sourceGain) sourceGain = ctx.createGain();
+        // Гарантированно создаем узел обхода для Bypass, независимо от режима
+        ensureBypassNode(ctx)
 
         if (!pitchNode) {
             // 1. Собираем базовый граф (EQ, Gain, Limiter и т.д.)
@@ -1483,12 +1506,10 @@
     function refreshEqualizer() {
         if (!eqFilters.length) return;
         const gains = settings.eqGains;
-        if (gains && gains.length === 10) {
-            eqFilters.forEach((filter, i) => {
-                const db = (gains[i] - 50) / 5;
-                filter.gain.value = db;
-            });
-        }
+        gains && 10 === gains.length && eqFilters.forEach((filter, i) => {
+            const db = (gains[i] - 50) * EQ_DB_RANGE / 50;
+            filter.gain.value = db
+        })
     }
 
     function refreshReverb() {
@@ -2747,8 +2768,33 @@
         if (e.source !== window) return;
         const data = e.data;
         if (!data || data.type !== "PITCH_UPDATE") return;
-   
+
         settings = { ...settings, ...(data.settings || {}) };
+
+        if (bypassNode) {
+            const isBp = !!settings.bypass;
+            const t = audioCtx.currentTime;
+
+            // ПРИНУДИТЕЛЬНО восстанавливаем связь, если она была оборвана 
+            // при переключении режимов (sourceGain.disconnect() убивает все связи)
+            try { sourceGain.connect(bypassNode); } catch (e) { }
+
+            // Плавно и безопасно переключаем прямую дорожку
+            bypassNode.gain.cancelScheduledValues(t);
+            bypassNode.gain.setValueAtTime(bypassNode.gain.value, t);
+            bypassNode.gain.linearRampToValueAtTime(isBp ? 1 : 0, t + 0.01);
+
+            // Плавно и безопасно глушим цепь эффектов
+            const tNode = overlayMode ? globalMergeNode : gainNode;
+            if (tNode) {
+                tNode.gain.cancelScheduledValues(t);
+                tNode.gain.setValueAtTime(tNode.gain.value, t);
+                tNode.gain.linearRampToValueAtTime(isBp ? 0 : 1, t + 0.01);
+            }
+
+            // Если включен bypass, прерываем обработку, чтобы не тратить CPU
+            if (isBp) return;
+        }
 
         let isNowBlacklisted = false;
         try {

@@ -9,6 +9,7 @@ const simpleModal = globalThis['simpleModal'];
     let suppressCustomSync = !1;
     let vizPort = null, vizElementsCache = null;
 
+
     const DEFAULT_SETTINGS = {
         pitchValueSemitones: 0,
         pitchValueCents: 0,
@@ -174,13 +175,128 @@ const simpleModal = globalThis['simpleModal'];
         "#modulationPanel": { modulationLayers: [] }
     };
 
+    const EQ_DB_RANGE = 10;
     const BUILT_IN_EQ_PRESETS = {
         flat: { name: "Flat", genres: [], values: Array(10).fill(50) },
-        rock: { name: "Rock", genres: ["rock"], values: [60, 55, 40, 30, 50, 65, 70, 65, 60, 55] },
-        pop: { name: "Pop", genres: ["pop"], values: [45, 50, 65, 70, 60, 45, 40, 45, 50, 50] },
-        classical: { name: "Classical", genres: ["classical"], values: [50, 50, 50, 50, 50, 40, 45, 50, 55, 55] },
-        bass: { name: "Bass Boost", genres: ["bass", "hip-hop"], values: [80, 75, 65, 55, 50, 50, 50, 50, 50, 50] }
+        // rock: { name: "Rock", genres: ["rock"], values: [60, 55, 40, 30, 50, 65, 70, 65, 60, 55] },
+        // pop: { name: "Pop", genres: ["pop"], values: [45, 50, 65, 70, 60, 45, 40, 45, 50, 50] },
+        // classical: { name: "Classical", genres: ["classical"], values: [50, 50, 50, 50, 50, 40, 45, 50, 55, 55] },
+        // bass: { name: "Bass Boost", genres: ["bass", "hip-hop"], values: [80, 75, 65, 55, 50, 50, 50, 50, 50, 50] }
+        'rock': {
+            name: 'Rock',
+            genres: ['rock'],
+            values: [0, 0.2, 0.2, 0, -0.2, -0.4, -0.2, 0, 0.2, 0],
+        },
+        'electronic': {
+            name: 'Electronic',
+            genres: ['electronic'],
+            values: [0.2, 0.2, 0.4, 0.2, 0, -0.2, 0, 0.2, 0.4, 0.2],
+        },
+        'alternative': {
+            name: 'Alternative',
+            genres: ['alternative'],
+            values: [0.2, 0.2, 0.4, 0, -0.4, -0.4, 0, 0, 0.2, 0.4],
+        },
+        'jazz': {
+            name: 'Jazz',
+            genres: ['jazz'],
+            values: [0, 0.2, 0.4, 0.2, 0, -0.2, -0.4, 0, 0.2, 0],
+        },
+        'indie': {
+            name: 'Indie',
+            genres: ['indie'],
+            values: [-0.2, -0.2, -0.2, -0.2, -0.2, 0, 0.2, 0.4, 0.2, 0],
+        },
+        'metal': {
+            name: 'Metal',
+            genres: ['metal'],
+            values: [0, 0, 0.2, 0.2, -0.2, -0.4, -0.2, 0, 0.2, 0],
+        },
+        'rap': {
+            name: 'Rap',
+            genres: ['rap'],
+            values: [0, 0.2, 0.4, 0.2, -0.2, -0.4, -0.4, -0.2, 0, 0.2],
+        },
+        'classical': {
+            name: 'Classical',
+            genres: ['classical'],
+            values: [0, 0, 0, 0, 0, 0, 0, -0.2, -0.4, -0.4],
+        },
+        'club': {
+            name: 'Club',
+            genres: ['club'],
+            values: [0, 0.2, 0.4, 0.2, 0, 0.2, 0.4, 0.4, 0.2, 0],
+        },
+        'dance': {
+            name: 'Dance',
+            genres: ['dance'],
+            values: [0.2, 0.2, 0.4, 0.2, 0, -0.2, -0.2, -0.4, -0.4, 0.4],
+        },
+        'hip-hop': {
+            name: 'Hip-hop',
+            genres: ['hip-hop'],
+            values: [0.4, 0.4, 0.4, 0.2, -0.2, 0, 0.2, 0, 0.2, 0.2],
+        },
+        'pop': {
+            name: 'Pop',
+            genres: ['pop'],
+            values: [0, 0, 0.2, 0.4, 0.2, 0, 0, 0, -0.2, 0],
+        },
+        'soft': {
+            name: 'Soft',
+            genres: ['soft'],
+            values: [0, 0, -0.2, -0.2, 0, 0.2, 0.4, 0.4, 0.6, 0.4],
+        },
+        'techno': {
+            name: 'Techno',
+            genres: ['techno'],
+            values: [0.4, 0.4, 0.4, 0.4, 0, -0.2, 0, 0.2, 0.4, 0.4],
+        },
+        'bassTreble': {
+            name: 'Bass & Treble',
+            genres: ['bass&treble'],
+            values: [0.4, 0.4, 0.6, 0.4, 0, -0.4, -0.2, 0.2, 0.6, 0.4],
+        },
+        'fullbass': {
+            name: 'Fullbass',
+            genres: ['fullbass'],
+            values: [0.4, 0.4, 0.6, 0.4, 0, 0, -0.2, -0.4, -0.4, -0.5],
+        },
     };
+
+    //   'percent0to100'  [0..100]                        — старый, 50 = нейтрально
+    //   'fraction0to1'   [0..1]                           — тот же старый в долях
+    //   'fractionSigned' [-1..1]                          — новый, 0 = нейтрально
+    //   'percentSigned'  [-100..100]                      — новый в процентах
+    //   'absoluteDb'      [-EQ_DB_RANGE..EQ_DB_RANGE]      — абсолютные дБ
+    function detectEqFormat(values, dbRange = EQ_DB_RANGE) {
+        const hasNegative = values.some(v => v < 0);
+        const maxAbs = Math.max(...values.map(v => Math.abs(v)));
+
+        if (!hasNegative) {
+            return maxAbs <= 1 ? "fraction0to1" : "percent0to100";
+        }
+        if (maxAbs <= 1) return "fractionSigned";
+        if (maxAbs <= dbRange) return "absoluteDb";
+        return "percentSigned";
+    }
+
+    function eqValueToRaw(value, format, dbRange = EQ_DB_RANGE) {
+        switch (format) {
+            case "percent0to100": return value;
+            case "fraction0to1": return value * 100;
+            case "fractionSigned": return 50 + value * 50;
+            case "percentSigned": return 50 + value / 2;
+            case "absoluteDb": return 50 + (value / dbRange) * 50;
+            default: return value;
+        }
+    }
+
+    function normalizeEqValues(values, explicitFormat) {
+        if (!Array.isArray(values) || 10 !== values.length) return Array(10).fill(50);
+        const format = explicitFormat || detectEqFormat(values);
+        return values.map(v => Math.round(Math.max(0, Math.min(100, eqValueToRaw(v, format)))));
+    }
 
     const semitonesSlider = document.getElementById("semitones");
     const centsSlider = document.getElementById("cents");
@@ -208,9 +324,9 @@ const simpleModal = globalThis['simpleModal'];
     const blacklistInput = document.getElementById("blacklistInput");
     const blacklistAddBtn = document.getElementById("blacklistAddBtn");
     const blacklistList = document.getElementById("blacklistList");
-    const siteStatus = document.getElementById("siteStatus");
     const siteStatusDot = document.getElementById("siteStatusDot");
-    const siteStatusText = document.getElementById("siteStatusText");
+    const bypassBtn = document.getElementById("bypassBtn");
+    const aboutBtn = document.getElementById("aboutBtn");
     const pitchSettingsPanel = document.getElementById("pitchSettingsPanel");
     const speedSettingsPanel = document.getElementById("speedSettingsPanel");
     const eqSettingsPanel = document.getElementById("eqSettingsPanel");
@@ -273,7 +389,13 @@ const simpleModal = globalThis['simpleModal'];
         globalPresetsBtn = document.getElementById("globalPresetsBtn"),
         globalPresetNameInput = document.getElementById("globalPresetNameInput"),
         globalPresetAddBtn = document.getElementById("globalPresetAddBtn"),
-        globalPresetList = document.getElementById("globalPresetList");
+        globalPresetList = document.getElementById("globalPresetList"),
+        eqPresetImportBtn = document.getElementById("eqPresetImportBtn"),
+        eqPresetExportBtn = document.getElementById("eqPresetExportBtn"),
+        eqPresetFileInput = document.getElementById("eqPresetFileInput"),
+        globalPresetImportBtn = document.getElementById("globalPresetImportBtn"),
+        globalPresetExportBtn = document.getElementById("globalPresetExportBtn"),
+        globalPresetFileInput = document.getElementById("globalPresetFileInput");
 
 
     let currentSettings = await async function loadSettings() {
@@ -858,13 +980,11 @@ const simpleModal = globalThis['simpleModal'];
         const preset = getAllEqPresets()[presetId];
         if (preset) {
             currentSettings.eqPreset = presetId;
-            currentSettings.eqGains = [...preset.values];
-            document.querySelectorAll('.range-slider[style*="vertical"] input').forEach((input, i) => {
-                input.value = currentSettings.eqGains[i];
-                syncVisualSlider(input);
-            });
-            updateEqualizerGraph(), updateEqPresetSelectUI();
-            document.querySelectorAll("#eqSettingsPanel .eq-container .range-slider").forEach((w, i) => updateEqLegend(i, currentSettings.eqGains[i]))
+            currentSettings.eqGains = normalizeEqValues(preset.values, preset.format),
+                document.querySelectorAll('.range-slider[style*="vertical"] input').forEach((input, i) => { input.value = currentSettings.eqGains[i], syncVisualSlider(input) });
+            updateEqualizerGraph();
+            updateEqPresetSelectUI();
+            document.querySelectorAll("#eqSettingsPanel .eq-container .range-slider").forEach((w, i) => updateEqLegend(i, currentSettings.eqGains[i]));
         }
     }
 
@@ -1038,7 +1158,7 @@ const simpleModal = globalThis['simpleModal'];
         if (!wrapper) return;
         const legend = wrapper.querySelector(".range-slider__legend-top");
         if (!legend) return;
-        const db = Math.round((val - 50) / 5);
+        const db = Math.round((val - 50) * EQ_DB_RANGE / 50);
         legend.textContent = db > 0 ? `+${db}` : `${db}`;
     }
 
@@ -1144,6 +1264,13 @@ const simpleModal = globalThis['simpleModal'];
         await refreshSiteStatus();
     }
 
+    function setSiteStatusDot(statusText){
+        statusText = statusText == "active" ? "active" : "inactive";
+        siteStatusDot.classList.remove("active", "inactive");
+        siteStatusDot.classList.add(statusText);
+        siteStatusDot.title = statusText;
+    }
+
     async function refreshSiteStatus() {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         let statusText = function matchURLPatterns(url, urlPatterns) {
@@ -1156,10 +1283,7 @@ const simpleModal = globalThis['simpleModal'];
             });
         }(tab?.url || "", currentSettings.blacklistPatterns || []) ? "inactive" : "active";
 
-        siteStatusDot.classList.remove("active", "inactive");
-        siteStatusDot.classList.add(statusText);
-        siteStatusText.textContent = statusText;
-        siteStatus.title = statusText;
+        setSiteStatusDot(statusText);
     }
 
     async function saveToggleState() {
@@ -1500,22 +1624,70 @@ const simpleModal = globalThis['simpleModal'];
         }
     });
 
-    // --- ОБРАБОТЧИКИ ОВЕРЛЕЯ И ГЛОБАЛЬНЫХ ПРЕСЕТОВ ---
-    overlayCheck.addEventListener("change", e => {
-        if (currentSettings.overlayEnabled = e.target.checked, globalPresetSelect.multiple = e.target.checked, e.target.checked) {
-            // Берем то, что сейчас выбрано в выпадающем списке (как в старой версии)
-            const sel = globalPresetSelect.value || "default";
-            currentSettings.overlayPresets = [sel];
-            userDisabledCustomInOverlay = false;
-            toggleGlobalUIControls(true);
-        } else {
-            currentSettings.globalPreset = currentSettings.overlayPresets?.[0] || "default";
-            userDisabledCustomInOverlay = false;
-            toggleGlobalUIControls(false);
+    function exportPresetsToFile(type, presets, filename) {
+        if (!Object.keys(presets).length) return;
+        const blob = new Blob([JSON.stringify({
+            version: 1,
+            type,
+            presets
+        }, null, 2)], {
+            type: "application/json"
+        }),
+            url = URL.createObjectURL(blob),
+            a = document.createElement("a");
+        a.href = url, a.download = filename, a.click(), URL.revokeObjectURL(url)
+    }
+    async function importPresetsFromFile(fileInput, expectedType, onImported) {
+        const file = fileInput.files?.[0];
+        if (!file) return;
+        try {
+            const data = JSON.parse(await file.text());
+            if (!data || data.type !== expectedType || !data.presets || "object" != typeof data.presets) throw new Error("Invalid file format");
+            onImported(data.presets)
+        } catch (err) {
+            console.error("[WS] Preset import error:", err)
+        } finally {
+            fileInput.value = ""
         }
-        updateGlobalPresetSelectUI();
-        scheduleApply();
+    }
+    eqPresetExportBtn.addEventListener("click", () => {
+        const custom = {};
+        for (const [id, p] of Object.entries(currentSettings.eqPresets || {})) custom[id] = {
+            name: p.name,
+            genres: p.genres,
+            values: p.values
+        };
+        exportPresetsToFile("eq-presets", custom, "ws-eq-presets.json")
     });
+    eqPresetImportBtn.addEventListener("click", () => eqPresetFileInput.click()), eqPresetFileInput.addEventListener("change", () => importPresetsFromFile(eqPresetFileInput, "eq-presets", presets => {
+        currentSettings.eqPresets = currentSettings.eqPresets || {};
+        for (const [id, p] of Object.entries(presets)) {
+            if (isBuiltInEqPreset(id)) continue;
+            currentSettings.eqPresets[id] = {
+                name: p.name || "Imported",
+                genres: Array.isArray(p.genres) ? p.genres : [],
+                values: Array.isArray(p.values) && 10 === p.values.length ? p.values : Array(10).fill(50)
+            }
+        }
+        renderEqPresetList(), updateEqPresetSelectUI(), scheduleApply()
+    })),
+
+        // --- ОБРАБОТЧИКИ ОВЕРЛЕЯ И ГЛОБАЛЬНЫХ ПРЕСЕТОВ ---
+        overlayCheck.addEventListener("change", e => {
+            if (currentSettings.overlayEnabled = e.target.checked, globalPresetSelect.multiple = e.target.checked, e.target.checked) {
+                // Берем то, что сейчас выбрано в выпадающем списке (как в старой версии)
+                const sel = globalPresetSelect.value || "default";
+                currentSettings.overlayPresets = [sel];
+                userDisabledCustomInOverlay = false;
+                toggleGlobalUIControls(true);
+            } else {
+                currentSettings.globalPreset = currentSettings.overlayPresets?.[0] || "default";
+                userDisabledCustomInOverlay = false;
+                toggleGlobalUIControls(false);
+            }
+            updateGlobalPresetSelectUI();
+            scheduleApply();
+        });
 
     globalPresetSelect.addEventListener("change", e => {
         if (isOverlayActive()) {
@@ -1591,7 +1763,75 @@ const simpleModal = globalThis['simpleModal'];
         }
     });
 
+    globalPresetExportBtn.addEventListener("click", () => {
+        const custom = {};
+        for (const [id, p] of Object.entries(currentSettings.globalPresets || {}))
+            if ("custom" !== id) custom[id] = {
+                name: p.name,
+                values: p.values
+            };
+        exportPresetsToFile("global-presets", custom, "ws-global-presets.json")
+    });
+
+    globalPresetImportBtn.addEventListener("click", () => globalPresetFileInput.click()), globalPresetFileInput.addEventListener("change", () => importPresetsFromFile(globalPresetFileInput, "global-presets", presets => {
+        currentSettings.globalPresets = currentSettings.globalPresets || {};
+        for (const [id, p] of Object.entries(presets)) {
+            if ("default" === id || "custom" === id) continue;
+            currentSettings.globalPresets[id] = {
+                name: p.name || "Imported",
+                values: {
+                    ...DEFAULT_SETTINGS,
+                    ...p.values || {}
+                }
+            }
+        }
+        renderGlobalPresetList(), updateGlobalPresetSelectUI(), scheduleApply()
+    }));
+
+    function initBypass() {
+
+        function setBypass(state) {
+            currentSettings.bypass = state; 
+            bypassBtn.classList.toggle("active", state); 
+            setSiteStatusDot(state ?  "inactive" : "active");
+            chrome.storage.local.set({
+                pitchSettings: currentSettings
+            }), chrome.tabs.query({
+                active: !0,
+                currentWindow: !0
+            }).then(([tab]) => {
+                tab?.id && chrome.tabs.sendMessage(tab.id, {
+                    type: "updateSettings",
+                    settings: currentSettings,
+                    overlayPresets: getActiveOverlayPresets(),
+                    overlayConfig: OVERLAY_CONFIG
+                }).catch(() => { })
+            })
+        }
+        bypassBtn.addEventListener("mousedown", e => {
+            e.preventDefault(), setBypass(!0)
+        });
+        bypassBtn.addEventListener("touchstart", e => {
+            e.preventDefault(), setBypass(!0)
+        }, {
+            passive: !1
+        });
+        window.addEventListener("mouseup", () => currentSettings.bypass && setBypass(!1));
+        window.addEventListener("touchend", () => currentSettings.bypass && setBypass(!1));
+        document.addEventListener("keydown", e => {
+            "b" === e.key.toLowerCase() && !e.target.matches("input, textarea, select") && !currentSettings.bypass && setBypass(!0)
+        });
+        document.addEventListener("keyup", e => {
+            "b" === e.key.toLowerCase() && !e.target.matches("input, textarea, select") && currentSettings.bypass && setBypass(!1)
+        })
+    }
+    aboutBtn.addEventListener("click", () => {
+        document.getElementById("aboutVersion").textContent = chrome.runtime.getManifest().version, simpleModal.openModal("aboutModal")
+    });
+
+
     [gainPanel, pitchSettingsPanel, speedSettingsPanel, eqSettingsPanel, stereoPanel, reverbPanel, bassPanel, clarityPanel, delayPanel, distortionPanel, dynamicsPanel, surroundPanel, modulationPanel].forEach(p => p.addEventListener("toggle", saveToggleState));
 
-    updateUI(), renderBlacklistList(), renderEqPresetList(), renderGlobalPresetList(), updateGlobalPresetSelectUI(), renderModulationLayers(), await refreshSiteStatus()
+    updateUI(), renderBlacklistList(), renderEqPresetList(), renderGlobalPresetList(), updateGlobalPresetSelectUI(), renderModulationLayers(), await refreshSiteStatus(), initBypass()
+
 })();

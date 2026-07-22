@@ -484,16 +484,26 @@
             <select id="globalPresetSelect">
                 <option value="default">Default</option>
             </select>
+
+            <button id="globalPresetsBtn" class="btn-vk link" type="button">Manage</button>
+        </div>
+        <div class="button-row middle">
             <div class="row">
+                <button id="blacklistBtn" class="btn-vk link" type="button">Blacklist <span id="siteStatusDot"></span></button>
+            </div>
+            <div class="row overlay">
                 <input type="checkbox" id="overlay">
                 <label>Overlay</label>
             </div>
+            <div class="row">
+                <div id="aboutContainer">
+                    <button id="aboutBtn" class="btn-vk link" type="button">About</button>
+                </div>
+            </div>
         </div>
         <div class="button-row">
-            <button id="blacklistBtn" class="btn-vk" type="button">Blacklist</button>
+            <button id="bypassBtn" class="btn-vk" type="button">Bypass</button>
             <button id="resetBtn" class="btn-vk" type="button">Reset</button>
-            <button id="globalPresetsBtn" class="btn-vk" type="button">Presets</button>
-            <div id="siteStatus"><span id="siteStatusDot"></span><span id="siteStatusText">active</span></div>
         </div>
 
     </div>
@@ -518,6 +528,11 @@
                 <input id="eqPresetNameInput" type="text" placeholder="EQ Preset name" spellcheck="false" style="flex:1;min-width:100px;" />
                 <input id="eqPresetGenresInput" type="text" placeholder="Genres (rock, pop)" spellcheck="false" style="flex:1;min-width:100px;" />
                 <button id="eqPresetAddBtn" class="btn-vk" type="button">Save Current</button>
+                <div class="button-row">
+                    <button id="eqPresetImportBtn" class="btn-vk secondary" type="button">Import</button>
+                    <button id="eqPresetExportBtn" class="btn-vk secondary" type="button">Export</button>
+                    <input id="eqPresetFileInput" type="file" accept=".json" style="display:none;" />
+                </div>
             </div>
             <div id="eqPresetList" class="blacklist-list"></div>
         </div>
@@ -533,10 +548,47 @@
             <div class="simple-modal__add" style="flex-wrap:wrap;gap:6px;">
                 <input id="globalPresetNameInput" type="text" placeholder="Preset name" spellcheck="false" style="flex:1;min-width:100px;" />
                 <button id="globalPresetAddBtn" class="btn-vk" type="button">Save Current</button>
+                <div class="button-row">
+                    <button id="globalPresetImportBtn" class="btn-vk secondary" type="button">Import</button>
+                    <button id="globalPresetExportBtn" class="btn-vk secondary" type="button">Export</button>
+                    <input id="globalPresetFileInput" type="file" accept=".json" style="display:none;" />
+                </div>
+
             </div>
             <div id="globalPresetList" class="blacklist-list"></div>
         </div>
     </div>
+
+    <div id="aboutModal" class="simple-modal" aria-hidden="true">
+        <div class="simple-modal__backdrop"></div>
+        <div class="simple-modal__panel">
+            <div class="simple-modal__header">
+                <div style="font-weight:600;">Wave Shifter</div>
+                <button class="close" type="button">×</button>
+            </div>
+            
+            <div style="padding: 10px; line-height: 1.5;">
+                <div id="siteLogo">
+                    
+                </div>
+                <p>
+                <strong>Wave Shifter</strong> is a set of effects for real-time audio processing right in your browser. Pitch shifting, equalizer, reverb, compression, surround sound, and much more.</p>
+                <p style="margin-top: 8px; opacity: 0.8;">Version: <span id="aboutVersion">...</span></p>
+                <div class="socials">
+                    <a href="https://github.com/unsonet" target="_blank" class="btn-vk link">GitHub</a>
+                    <a href="https://www.patreon.com/Unsonet" target="_blank" class="btn-vk link">Patreon</a>
+                    <a href="https://x.com/unsonet_team" target="_blank" class="btn-vk link">X</a>
+                    <a href="https://www.linkedin.com/company/unsonet" target="_blank" class="btn-vk link">LinkedIn</a>
+                    <a href="https://www.youtube.com/@unsonet" target="_blank" class="btn-vk link">YouTube</a>
+                    <a href="https://t.me/unsonet_team" target="_blank" class="btn-vk link">Telegram</a>
+                    <a href="https://instagram.com/unsonet_team/" target="_blank" class="btn-vk link">Instagram</a>
+                    <a href="https://www.facebook.com/unsonet.team/" target="_blank" class="btn-vk link">Facebook</a>
+                </div>
+                <p style="margin-top: 8px; opacity: 0.8;">Email: unsonet.team@gmail.com</p>
+            </div>
+        </div>
+    </div>
+    
 
     <script src="src/js/simple-modal.js"></script>
     <script src="popup.js"></script>
