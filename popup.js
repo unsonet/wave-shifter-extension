@@ -8,6 +8,7 @@ const simpleModal = globalThis['simpleModal'];
     let userDisabledCustomInOverlay = !1;
     let suppressCustomSync = !1;
     let vizPort = null, vizElementsCache = null;
+    let currentSiteStatus = null;
 
 
     const DEFAULT_SETTINGS = {
@@ -1265,7 +1266,7 @@ const simpleModal = globalThis['simpleModal'];
     }
 
     function setSiteStatusDot(statusText){
-        statusText = statusText == "active" ? "active" : "inactive";
+        statusText = currentSiteStatus == "inactive" ? "inactive" : statusText == "active" ? "active" : "inactive";
         siteStatusDot.classList.remove("active", "inactive");
         siteStatusDot.classList.add(statusText);
         siteStatusDot.title = statusText;
@@ -1282,8 +1283,9 @@ const simpleModal = globalThis['simpleModal'];
                 return String(url || "").match(new RegExp("^" + escaped + "$"));
             });
         }(tab?.url || "", currentSettings.blacklistPatterns || []) ? "inactive" : "active";
-
-        setSiteStatusDot(statusText);
+        currentSiteStatus = statusText;
+        setSiteStatusDot(currentSiteStatus);
+        return currentSiteStatus;
     }
 
     async function saveToggleState() {

@@ -885,14 +885,22 @@ select {
   color: #fff;
 }
 
-/*socials*/
-.socials{
+/*aboutModal*/
+#aboutModal .socials{
   margin-top: 12px; 
   display: flex; 
   gap: 12px;
   flex-wrap: wrap;
 }
-.socials a{
+#aboutModal .socials a{
   text-decoration:none;
 }
-/*end socials*/
+
+#aboutModal .shadow-text{
+  margin-top: 8px; opacity: 0.8;
+} 
+
+#aboutModal .content{
+  padding: 10px; line-height: 1.5;
+}
+/*end aboutModal*/
