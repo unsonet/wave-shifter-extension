@@ -52,6 +52,7 @@ const simpleModal = globalThis['simpleModal'];
         globalPresets: {},
         modulationLayers: [],
         enableVisualization: !0,
+        optimisation: false
     };
 
     // Схема описывает, какие слайдеры есть у каждого типа модуляции.
@@ -335,9 +336,9 @@ const simpleModal = globalThis['simpleModal'];
     const gainOutputVal = document.getElementById("gainOutputVal");
     const effectsMixSlider = document.getElementById("effectsMix");
     const effectsMixVal = document.getElementById("effectsMixVal");
-    const gainPanel = document.getElementById("gainPanel");
-    const optimisationDelayCheck = document.getElementById("optimisationDelay");
-    const stereoPanel = document.getElementById("stereoPanel"),
+    const gainPanel = document.getElementById("gainPanel"),
+        optimisationCheck = document.getElementById("optimisation"),
+        stereoPanel = document.getElementById("stereoPanel"),
         reverbPanel = document.getElementById("reverbPanel"),
         reverbPresetSelect = document.getElementById("reverbPreset"),
         reverbWetSlider = document.getElementById("reverbWet"),
@@ -432,7 +433,8 @@ const simpleModal = globalThis['simpleModal'];
             blacklistPatterns: saved.blacklistPatterns || defaultSettings.blacklistPatterns,
             eqPresets: saved.eqPresets || {},
             globalPresets: saved.globalPresets || {},
-            overlayPresets: saved.overlayPresets || []
+            overlayPresets: saved.overlayPresets || [],
+            optimisation: saved.optimisation !== undefined ? saved.optimisation : (saved.optimisationDelay || false)
         };
     }();
 
@@ -449,38 +451,55 @@ const simpleModal = globalThis['simpleModal'];
     let applyTimeout = null;
 
     function syncUIToActivePresets() {
+        // 1. Синхронизируем данные активных пресетов с globalPresets
         if (isOverlayActive()) {
-            const activeIds = currentSettings.overlayPresets || [],
-                allPresets = getAllGlobalPresets();
+            const activeIds = currentSettings.overlayPresets || [];
+            const allPresets = getAllGlobalPresets();
+
             activeIds.forEach(pId => {
-                if (!currentSettings.globalPresets) currentSettings.globalPresets = {};
+                if (!currentSettings.globalPresets) {
+                    currentSettings.globalPresets = {};
+                }
                 if (!currentSettings.globalPresets[pId]) {
                     const src = allPresets[pId];
                     currentSettings.globalPresets[pId] = {
                         name: src?.name || pId,
-                        values: {
-                            ...DEFAULT_SETTINGS,
-                            ...src?.values || {}
-                        }
-                    }
+                        values: { ...DEFAULT_SETTINGS, ...src?.values || {} }
+                    };
                 }
-                if (!currentSettings.globalPresets[pId].values) currentSettings.globalPresets[pId].values = {};
-                //currentSettings.globalPresets[pId].values.gainOutputDb = currentSettings.gainOutputDb
-            })
+                if (!currentSettings.globalPresets[pId].values) {
+                    currentSettings.globalPresets[pId].values = {};
+                }
+            });
         }
-        if (suppressCustomSync) {
-            suppressCustomSync = !1;
-            return void updateGlobalPresetSelectUI();
-        }
-        if (currentSettings.modulationLayers === undefined) currentSettings.modulationLayers = [];
-        if (currentSettings.distortionLayers === undefined) currentSettings.distortionLayers = [];
-        if (currentSettings.distMix == null) currentSettings.distMix = 0;
-        if (currentSettings.delayTime == null) currentSettings.delayTime = 250;
-        if (currentSettings.delayFeedback == null) currentSettings.delayFeedback = 40;
-        if (currentSettings.delayMix == null) currentSettings.delayMix = 0;
 
+        // 2. Защита от рассинхрона при программном обновлении UI
+        if (suppressCustomSync) {
+            suppressCustomSync = false;
+            updateGlobalPresetSelectUI();
+            return;
+        }
+
+        // Инициализация массивов, если они были удалены или повреждены
+        if (void 0 === currentSettings.modulationLayers) currentSettings.modulationLayers = [];
+        if (void 0 === currentSettings.distortionLayers) currentSettings.distortionLayers = [];
+        if (null == currentSettings.distMix) currentSettings.distMix = 0;
+        if (null == currentSettings.delayTime) currentSettings.delayTime = 250;
+        if (null == currentSettings.delayFeedback) currentSettings.delayFeedback = 40;
+        if (null == currentSettings.delayMix) currentSettings.delayMix = 0;
+
+        // 3. Проверяем, стали ли текущие настройки равны дефолтным
         let isDefault = true;
-        const excludeKeys = ["blacklistPatterns", "toggleState", "eqPresets", "globalPresets", "overlayPresets", "overlayEnabled", "optimisationDelay"];
+        const excludeKeys = [
+            "blacklistPatterns",
+            "toggleState",
+            "eqPresets",
+            "globalPresets",
+            "overlayPresets",
+            "overlayEnabled",
+            "optimisation"
+        ];
+
         for (const key in DEFAULT_SETTINGS) {
             if (!excludeKeys.includes(key) && JSON.stringify(DEFAULT_SETTINGS[key]) !== JSON.stringify(currentSettings[key])) {
                 isDefault = false;
@@ -488,32 +507,49 @@ const simpleModal = globalThis['simpleModal'];
             }
         }
 
+        // 4. Если настройки вернулись к дефолтным — убираем "custom"
         if (isDefault) {
-            // 1. Если мы на нем стояли - переключаемся на default
             const wasCustom = "custom" === currentSettings.globalPreset;
+
             if (wasCustom) {
                 currentSettings.globalPreset = "default";
                 globalPresetSelect.value = "default";
             }
 
-            // 2. Убираем из активных цепей overlay
-            if (!isOverlayActive() && currentSettings.overlayPresets?.includes("custom")) {
-                currentSettings.overlayPresets = currentSettings.overlayPresets.filter(id => "custom" !== id);
+            if (isOverlayActive()) {
+                // В overlay: заменяем "custom" на "default" в выбранном списке
+                if (currentSettings.overlayPresets?.includes("custom")) {
+                    currentSettings.overlayPresets = [...new Set(
+                        currentSettings.overlayPresets.map(id => "custom" === id ? "default" : id)
+                    )];
+                }
+            } else {
+                // В обычном режиме: просто удаляем "custom"
+                if (currentSettings.overlayPresets?.includes("custom")) {
+                    currentSettings.overlayPresets = currentSettings.overlayPresets.filter(id => "custom" !== id);
+                }
             }
 
-            // 3. ФИЗИЧЕСКИ УДАЛЯЕМ из памяти ВСЕГДА, без всяких условий!
-            if (wasCustom) {
+            // Очищаем сам пресет "custom" от идентичных дефолту данных
+            if (wasCustom || isOverlayActive()) {
                 delete currentSettings.globalPresets?.custom;
             }
 
-            // 4. СБРАСЫВАЕМ блокировку, чтобы при следующих изменениях custom снова появился
             userDisabledCustomInOverlay = false;
             updateGlobalPresetSelectUI();
             return;
         }
 
-        currentSettings.globalPresets || (currentSettings.globalPresets = {});
-        currentSettings.globalPresets.custom || (currentSettings.globalPresets.custom = { name: "Custom", values: {} });
+        // 5. Если настройки отличаются от дефолтных — создаем/обновляем "custom"
+        if (!currentSettings.globalPresets) {
+            currentSettings.globalPresets = {};
+        }
+        if (!currentSettings.globalPresets.custom) {
+            currentSettings.globalPresets.custom = {
+                name: "Custom",
+                values: {}
+            };
+        }
 
         const pValues = currentSettings.globalPresets.custom.values;
         pValues.pitchValueSemitones = currentSettings.pitchValueSemitones;
@@ -533,15 +569,15 @@ const simpleModal = globalThis['simpleModal'];
         pValues.delayTime = currentSettings.delayTime || 250;
         pValues.delayFeedback = currentSettings.delayFeedback || 40;
         pValues.delayMix = currentSettings.delayMix || 0;
+        pValues.subbassMix = currentSettings.subbassMix || 0;
+        pValues.warmthMix = currentSettings.warmthMix || 0;
+        pValues.stereoWidthMix = currentSettings.stereoWidthMix || 0;
+        pValues.stereoCenterMix = currentSettings.stereoCenterMix || 0;
+        pValues.stereoFocusMix = currentSettings.stereoFocusMix || 0;
+        pValues.definitionMix = currentSettings.definitionMix || 0;
+        pValues.optimisation = currentSettings.optimisation;
 
-        pValues.delayMix = currentSettings.delayMix || 0,
-            pValues.subbassMix = currentSettings.subbassMix || 0,
-            pValues.warmthMix = currentSettings.warmthMix || 0,
-            pValues.stereoWidthMix = currentSettings.stereoWidthMix || 0,
-            pValues.stereoCenterMix = currentSettings.stereoCenterMix || 0,
-            pValues.stereoFocusMix = currentSettings.stereoFocusMix || 0,
-            pValues.definitionMix = currentSettings.definitionMix || 0;
-
+        // 6. Добавляем "custom" в список активных (если пользователь его не отключал)
         if (isOverlayActive()) {
             if (!userDisabledCustomInOverlay && !currentSettings.overlayPresets.includes("custom")) {
                 currentSettings.overlayPresets.push("custom");
@@ -557,8 +593,13 @@ const simpleModal = globalThis['simpleModal'];
     }
 
     async function scheduleApply() {
-        syncUIToActivePresets(); // Синхронизируем ПЕРЕД отправкой
-        if (currentSettings.optimisationDelay) applyTimeout && clearTimeout(applyTimeout), applyTimeout = setTimeout(async () => { applyTimeout = null, await applySettings() }, 150); else { if (applyTimeout) return; applyTimeout = setTimeout(async () => { applyTimeout = null, await applySettings() }, 16) }
+        syncUIToActivePresets();
+        if (applyTimeout) return;
+        const delay = currentSettings.optimisation ? 150 : 16;
+        applyTimeout = setTimeout(async () => {
+            applyTimeout = null;
+            await applySettings();
+        }, delay);
     }
 
     function isOverlayActive() {
@@ -574,7 +615,7 @@ const simpleModal = globalThis['simpleModal'];
         // Скрываем "призрачный" custom из списка, если его настройки дефолтные
         if (all.custom && all.custom.values) {
             let isCustomDefault = true;
-            const excludeKeys = ["blacklistPatterns", "toggleState", "eqPresets", "globalPresets", "overlayPresets", "overlayEnabled", "optimisationDelay"];
+            const excludeKeys = ["blacklistPatterns", "toggleState", "eqPresets", "globalPresets", "overlayPresets", "overlayEnabled", "optimisation"];
             for (const key in DEFAULT_SETTINGS) {
                 if (!excludeKeys.includes(key)) {
                     if (all.custom.values[key] === undefined) {
@@ -598,12 +639,29 @@ const simpleModal = globalThis['simpleModal'];
 
     function getActiveOverlayPresets() {
         if (!isOverlayActive()) return null;
-        let selectedIds = Array.from(globalPresetSelect.selectedOptions).map(o => o.value).filter(Boolean);
-        0 === selectedIds.length && (selectedIds = currentSettings.overlayPresets || ["default"]);
-        const all = getAllGlobalPresets(), seenIds = new Set;
-        return selectedIds.filter(id => !seenIds.has(id) && (seenIds.add(id), !0)).map(id => {
-            const presetValues = all[id]?.values || {}; return { id, values: { ...DEFAULT_SETTINGS, ...presetValues } }
-        }).slice(0, OVERLAY_CONFIG.MAX_OVERLAY_CHAINS)
+
+        let selectedIds = Array.from(globalPresetSelect.selectedOptions)
+            .map(o => o.value)
+            .filter(Boolean);
+
+        if (selectedIds.length === 0) {
+            selectedIds = currentSettings.overlayPresets || ["default"];
+        }
+
+        // ЖЕЛЕЗНАЯ ЗАЩИТА: убираем любые дубликаты до обработки
+        const uniqueIds = [...new Set(selectedIds)];
+
+        const all = getAllGlobalPresets();
+
+        return uniqueIds
+            .map(id => {
+                const presetValues = all[id]?.values || {};
+                return {
+                    id: id,
+                    values: { ...DEFAULT_SETTINGS, ...presetValues }
+                };
+            })
+            .slice(0, OVERLAY_CONFIG.MAX_OVERLAY_CHAINS);
     }
 
     function switchToCustomIfNeeded() {
@@ -616,7 +674,7 @@ const simpleModal = globalThis['simpleModal'];
 
             const presetValues = {};
             for (const key in DEFAULT_SETTINGS) {
-                if (!["blacklistPatterns", "toggleState", "eqPresets", "globalPresets", "overlayPresets", "overlayEnabled", "optimisationDelay"].includes(key)) {
+                if (!["blacklistPatterns", "toggleState", "eqPresets", "globalPresets", "overlayPresets", "overlayEnabled", "optimisation"].includes(key)) {
                     presetValues[key] = JSON.parse(JSON.stringify(currentSettings[key]));
                 }
             }
@@ -780,7 +838,7 @@ const simpleModal = globalThis['simpleModal'];
         // Сохраняем только параллельные настройки
         const presetValues = {};
         for (const key in DEFAULT_SETTINGS) {
-            if (!["blacklistPatterns", "toggleState", "eqPresets", "globalPresets", "overlayPresets", "overlayEnabled", "optimisationDelay"].includes(key)) {
+            if (!["blacklistPatterns", "toggleState", "eqPresets", "globalPresets", "overlayPresets", "overlayEnabled", "optimisation"].includes(key)) {
                 presetValues[key] = JSON.parse(JSON.stringify(currentSettings[key]));
             }
         }
@@ -1126,7 +1184,7 @@ const simpleModal = globalThis['simpleModal'];
             compressorReleaseSlider.value = currentSettings.compressorRelease,
             compressorReleaseVal.textContent = currentSettings.compressorRelease + " ms",
             dolbyEnabledCheck.checked = currentSettings.dolbyEnabled,
-            optimisationDelayCheck.checked = currentSettings.optimisationDelay || !1,
+            optimisationCheck.checked = currentSettings.optimisation || !1,
             enableVisualizationCheck.checked = currentSettings.enableVisualization !== !1,
             overlayCheck.checked = currentSettings.overlayEnabled || !1,
             globalPresetSelect.multiple = overlayCheck.checked
@@ -1149,7 +1207,7 @@ const simpleModal = globalThis['simpleModal'];
 
         document.querySelectorAll(".range-slider input").forEach(syncVisualSlider);
         updateEqualizerGraph(), updateEqPresetSelectUI(), updateSectionResetIcons(), renderModulationLayers(),
-            currentSettings.enableVisualization !== !1 ? startVisualization() : stopVisualization()
+            !1 !== currentSettings.enableVisualization && eqSettingsPanel.open ? startVisualization() : stopVisualization()
     }
 
     function formatDb(val) { return val > 0 ? `+${val} dB` : `${val} dB`; }
@@ -1265,7 +1323,7 @@ const simpleModal = globalThis['simpleModal'];
         await refreshSiteStatus();
     }
 
-    function setSiteStatusDot(statusText){
+    function setSiteStatusDot(statusText) {
         statusText = currentSiteStatus == "inactive" ? "inactive" : statusText == "active" ? "active" : "inactive";
         siteStatusDot.classList.remove("active", "inactive");
         siteStatusDot.classList.add(statusText);
@@ -1505,9 +1563,9 @@ const simpleModal = globalThis['simpleModal'];
     smartCheck.addEventListener("change", e => { currentSettings.applySmartProcessing = e.target.checked, updateSectionResetIcons(), switchToCustomIfNeeded(), scheduleApply() });
     preservePitchCheck.addEventListener("change", e => { currentSettings.preservePitch = e.target.checked, updateSectionResetIcons(), switchToCustomIfNeeded(), scheduleApply() });
 
-    optimisationDelayCheck.addEventListener("change", e => {
-        currentSettings.optimisationDelay = e.target.checked;
-        scheduleApply()
+    optimisationCheck.addEventListener('change', e => {
+        currentSettings.optimisation = e.target.checked;
+        scheduleApply();
     });
 
     dolbyEnabledCheck.addEventListener("change", e => {
@@ -1725,7 +1783,7 @@ const simpleModal = globalThis['simpleModal'];
         if (!preset) return;
         suppressCustomSync = !0; // это ЗАГРУЗКА пресета, а не правка пользователя — не трогаем "custom"
         currentSettings.globalPreset = presetId;
-        const vals = preset.values, skip = new Set(["eqGains", "blacklistPatterns", "toggleState", "eqPresets", "globalPresets", "overlayPresets", "overlayEnabled", "optimisationDelay"]);
+        const vals = preset.values, skip = new Set(["eqGains", "blacklistPatterns", "toggleState", "eqPresets", "globalPresets", "overlayPresets", "overlayEnabled", "optimisation"]);
         for (const key in vals) skip.has(key) || (currentSettings[key] = JSON.parse(JSON.stringify(vals[key])));
         updateUI()
     }
@@ -1793,9 +1851,9 @@ const simpleModal = globalThis['simpleModal'];
     function initBypass() {
 
         function setBypass(state) {
-            currentSettings.bypass = state; 
-            bypassBtn.classList.toggle("active", state); 
-            setSiteStatusDot(state ?  "inactive" : "active");
+            currentSettings.bypass = state;
+            bypassBtn.classList.toggle("active", state);
+            setSiteStatusDot(state ? "inactive" : "active");
             chrome.storage.local.set({
                 pitchSettings: currentSettings
             }), chrome.tabs.query({
@@ -1831,6 +1889,9 @@ const simpleModal = globalThis['simpleModal'];
         document.getElementById("aboutVersion").textContent = chrome.runtime.getManifest().version, simpleModal.openModal("aboutModal")
     });
 
+    eqSettingsPanel.addEventListener('toggle', () => {
+        !1 !== currentSettings.enableVisualization && eqSettingsPanel.open ? startVisualization() : stopVisualization();
+    });
 
     [gainPanel, pitchSettingsPanel, speedSettingsPanel, eqSettingsPanel, stereoPanel, reverbPanel, bassPanel, clarityPanel, delayPanel, distortionPanel, dynamicsPanel, surroundPanel, modulationPanel].forEach(p => p.addEventListener("toggle", saveToggleState));
 

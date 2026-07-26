@@ -88,11 +88,23 @@
         }
     } catch (e) { }
 
-
+    function evictPitchProcessor(slotKey) {
+        const entry = pitchProcessorPool.get(slotKey);
+        if (!entry) return;
+        try { entry.pitchNode?.port?.close?.() } catch (e) { }
+        try { entry.pitchNode?.disconnect() } catch (e) { }
+        if (entry.correlatorNodes) {
+            try { entry.correlatorNodes.oscillators.forEach(o => { try { o.stop() } catch (e) { } try { o.disconnect() } catch (e) { } }) } catch (e) { }
+        }
+        pitchProcessorPool.delete(slotKey);
+    }
 
     async function getOrCreatePitchProcessor(slotKey, ctx, useSignalsmith) {
         const cached = pitchProcessorPool.get(slotKey);
-        if (cached && cached.ctx === ctx) return cached; // уже существует — переиспользуем, не создаём новый
+        const cachedMatches = cached && cached.ctx === ctx &&
+            (useSignalsmith ? cached.procType === "signalsmith" : cached.procType !== "signalsmith");
+        if (cachedMatches) return cached;
+        if (cached) evictPitchProcessor(slotKey);
 
         let pNode = null, corrNodes = null, pType = null;
 
@@ -166,7 +178,8 @@
 
         try {
             if (!audioCtx || !sourceGain) return;
-
+            overlayGraphBuilt = !1;
+            evictPitchProcessor("normal"); // overlay-граф не должен сосуществовать с normal-процессором — точка
             // !!! ВАЖНО: перед построением Overlay очищаем все узлы обычного режима
             disposeNormalModeNodes();
 
@@ -176,6 +189,17 @@
             } catch (e) { }
 
             const chainsToBuild = overlayPresetsData || [settings];
+
+            for (const [key, entry] of pitchProcessorPool) {
+                if ("normal" === key) continue;
+                const idx = Number(key.split(":")[1]);
+                if (Number.isInteger(idx) && idx >= chainsToBuild.length) {
+                    try { entry.pitchNode?.port?.close?.() } catch (e) { }
+                    try { entry.pitchNode?.disconnect() } catch (e) { }
+                    if (entry.correlatorNodes) try { entry.correlatorNodes.oscillators.forEach(o => { try { o.stop() } catch (e) { } try { o.disconnect() } catch (e) { } }) } catch (e) { }
+                    pitchProcessorPool.delete(key);
+                }
+            }
 
             // Очистка старых параллельных цепочек (Overlay)
             parallelChains.forEach(chain => disposeChain(chain));
@@ -275,8 +299,7 @@
 
                 try {
                     const pSet = chainsToBuild[i].values || chainsToBuild[i];
-                    const useSignalsmith = !isWasmBlocked && i < overlayConfig.MAX_SIGNALSMITH_CHAINS;
-
+                    const useSignalsmith = !isWasmBlocked && !settings.optimisation && i < overlayConfig.MAX_SIGNALSMITH_CHAINS;
                     const chainEqs = EQ_BANDS.map(band => {
                         const f = audioCtx.createBiquadFilter();
                         f.type = band.type;
@@ -403,11 +426,13 @@
                         procType
                     } = await getOrCreatePitchProcessor(`overlay:${i}`, audioCtx, useSignalsmith);
 
-                    // Подключение pitchNode (оставляем как было)
-                    if (procType === "signalsmith") {
+
+                    if ("signalsmith" === procType) {
+                        try { pitchNode.disconnect() } catch (e) { } // рвём ВСЕ старые выходы переиспользуемого узла перед новым подключением
                         sourceGain.connect(pitchNode);
                         pitchNode.connect(chainEqs[0]);
-                    } else if (procType === "correlator" && correlatorNodes) {
+                    } else if ("correlator" === procType && correlatorNodes) {
+                        try { pitchNode.disconnect() } catch (e) { }
                         sourceGain.connect(correlatorNodes.delay1);
                         sourceGain.connect(correlatorNodes.delay2);
                         pitchNode.connect(chainEqs[0]);
@@ -415,10 +440,11 @@
                         sourceGain.connect(chainEqs[0]);
                     }
 
+
                     // Важно: возвращаем прямую дорожку для Bypass, 
                     // так как выше sourceGain.disconnect() её оборвал
                     if (bypassNode) sourceGain.connect(bypassNode);
-
+                    console.log("[WS DEBUG] pool size:", pitchProcessorPool.size, [...pitchProcessorPool.keys()], "chains:", parallelChains.length);
                     parallelChains.push({
                         pitchNode,
                         eqs: chainEqs,
@@ -502,6 +528,7 @@
             chain.eqs = null;
         }
 
+        try { chain.pitchNode?.disconnect() } catch (e) { }
         // 4. Sub (GainNode)
         try { chain.subL?.disconnect(); } catch (e) { }
         try { chain.subR?.disconnect(); } catch (e) { }
@@ -714,7 +741,15 @@
         // 5. Отключаем pitchNode (если есть)
         try { pitchNode?.disconnect() } catch (e) { }
         pitchNode = null;
-
+        correlatorNodes && (correlatorNodes.oscillators.forEach(o => {
+            try {
+                o.stop()
+            } catch (e) { }
+            try {
+                o.disconnect()
+            } catch (e) { }
+        }));
+        correlatorNodes = null;
         // 6. Отключаем все основные узлы обычного режима
         const nodes = [
             gainNode, limiterNode, stereoSplitter, stereoMerger, stereo3dChain, subLeftGain, subRightGain,
@@ -801,7 +836,8 @@
                 }])
             } else if (chain.procType === "correlator" && chain.correlatorNodes) {
                 const finalSemitones = pSet.pitchValueSemitones + pSet.pitchValueCents / 100 + (!usingHowler || !settings.preservePitch || globalRate <= 0 ? 0 : -12 * Math.log2(globalRate));
-                const factor = Math.pow(2, finalSemitones / 12), windowSec = pSet.windowSizeMilliseconds / 1000;
+                const factor = Math.pow(2, finalSemitones / 12), 
+                windowSec=correlatorWindowSec(pSet.windowSizeMilliseconds);
                 if (factor === 1) { chain.correlatorNodes.freqSrc.offset.value = 0; chain.correlatorNodes.wss.offset.value = 0; }
                 else { chain.correlatorNodes.freqSrc.offset.value = 1.17915 / windowSec * (1 - factor); chain.correlatorNodes.wss.offset.value = windowSec; }
             }
@@ -976,7 +1012,16 @@
                                 var p = node.workletNode.parameters;
                                 "bitcrusher" === l.type ? (p.has("bits") && (p.get("bits").value = l.params.bits || 8), p.has("normRange") && (p.get("normRange").value = l.params.normRange || 40)) : "cdskipper" === l.type ? (p.has("loopMs") && (p.get("loopMs").value = l.params.loopMs || 200), p.has("repeats") && (p.get("repeats").value = l.params.repeats || 4)) : "vinyl" === l.type && (p.has("noise") && (p.get("noise").value = (l.params.noise || 0) / 100), p.has("crackle") && (p.get("crackle").value = (l.params.crackle || 0) / 100))
                             } else if (l && node.processors) {
-                                node.processors.forEach(function (p) { "distortion" === l.type && (p.shaper && (p.shaper.curve = makeDistCurve((l.params.amount || 50) / 100)), p.tone && (p.tone.frequency.value = 2e3 + (l.params.tone || 50) / 100 * 8e3)) })
+                                node.processors.forEach(function (p) {
+                                    if ("distortion" === l.type) {
+                                        const amt = (l.params.amount || 50) / 100;
+                                        if (p.shaper && p._lastAmount !== amt) {
+                                            p.shaper.curve = makeDistCurve(amt);
+                                            p._lastAmount = amt;
+                                        }
+                                        p.tone && (p.tone.frequency.value = 2000 + ((l.params.tone || 50) / 100) * 8000);
+                                    }
+                                })
                             }
                         });
                     } else {
@@ -1089,6 +1134,13 @@
         { frequency: 16000, type: "highshelf" }
     ];
 
+// JS-корректор использует windowSizeMilliseconds как глубину свипа задержки — большие
+ // значения (типичные 120мс из UI) растягивают цикл кроссфейда на секунды и делают
+ // хорус хорошо слышимым. У Signalsmith то же число значит другое (размер FFT-блока)
+ // и не режется. Для корректора искусственно ограничиваем потолок.
+ const CORRELATOR_MAX_WINDOW_MS=30;
+ function correlatorWindowSec(uiMs){return Math.min(uiMs||120,CORRELATOR_MAX_WINDOW_MS)/1e3}
+
     let audioCtx = null;
     let pitchNode = null;
     let eqFilters = [];
@@ -1125,7 +1177,7 @@
         compressorThreshold: -24, compressorKnee: 30, compressorRatio: 12,
         compressorAttack: 3, compressorRelease: 250, dolbyEnabled: false
     };
-
+    let lastOptimisation = !!settings.optimisation;
 
     function calcPlaybackRate() {
         const u = Number(settings.speedUnits) || 0;
@@ -1326,6 +1378,7 @@
         ensureBypassNode(ctx)
 
         if (!pitchNode) {
+            const token = ++rebuildCancelToken;
             // 1. Собираем базовый граф (EQ, Gain, Limiter и т.д.)
             eqFilters = EQ_BANDS.map(band => {
                 const filter = ctx.createBiquadFilter();
@@ -1389,7 +1442,8 @@
                 dolbyOutputNode = ctx.createGain();
                 surroundSplitter = ctx.createChannelSplitter(2);
                 surroundMerger = ctx.createChannelMerger(6);
-                surroundCenterGain = ctx.createGain(); surroundCenterGain.gain.value = 0.2;
+                surroundCenterGain = ctx.createGain();
+                surroundCenterGain.gain.value = 0.2;
 
                 // --- УЗЛЫ ЭФФЕКТОВ (LO-FI, DELAY, DEFINITION) ---
                 distInputNode = ctx.createGain();
@@ -1481,12 +1535,12 @@
 
 
             const isWasmBlocked = await isWasmBlockedByCSP();
+            if (token !== rebuildCancelToken) { disposeNormalModeNodes(); return }
             if (isWasmBlocked) console.log("%c[WS] WebAssembly is restricted by CSP. Using fallback processor.", "color: #f0ad4e; font-weight: bold;");
-            const {
-                pitchNode: pNode,
-                correlatorNodes: corrNodes,
-                procType
-            } = await getOrCreatePitchProcessor("normal", ctx, !isWasmBlocked);
+
+            const useSignalsmithNormal = !isWasmBlocked && !settings.optimisation;
+            const { pitchNode: pNode, correlatorNodes: corrNodes, procType } = await getOrCreatePitchProcessor("normal", ctx, useSignalsmithNormal);
+            if (token !== rebuildCancelToken) { try { pNode?.disconnect() } catch (e) { } disposeNormalModeNodes(); return }
             if (pNode) {
                 pitchNode = pNode;
                 correlatorNodes = "correlator" === procType ? corrNodes : null;
@@ -1625,7 +1679,7 @@
             })());
 
             const factor = isBlack ? 1 : Math.pow(2, finalSemitones / 12);
-            const windowSec = settings.windowSizeMilliseconds / 1000;
+            const windowSec=correlatorWindowSec(settings.windowSizeMilliseconds);
 
             if (factor === 1) {
                 correlatorNodes.freqSrc.offset.value = 0;
@@ -2367,7 +2421,16 @@
                         var p = node.workletNode.parameters;
                         "bitcrusher" === l.type ? (p.has("bits") && (p.get("bits").value = l.params.bits || 8), p.has("normRange") && (p.get("normRange").value = l.params.normRange || 40)) : "cdskipper" === l.type ? (p.has("loopMs") && (p.get("loopMs").value = l.params.loopMs || 200), p.has("repeats") && (p.get("repeats").value = l.params.repeats || 4)) : "vinyl" === l.type && (p.has("noise") && (p.get("noise").value = (l.params.noise || 0) / 100), p.has("crackle") && (p.get("crackle").value = (l.params.crackle || 0) / 100))
                     } else if (l && node.processors) {
-                        node.processors.forEach(function (p) { "distortion" === l.type && (p.shaper && (p.shaper.curve = makeDistCurve((l.params.amount || 50) / 100)), p.tone && (p.tone.frequency.value = 2e3 + (l.params.tone || 50) / 100 * 8e3)) })
+                        node.processors.forEach(function (p) {
+                            if ("distortion" === l.type) {
+                                const amt = (l.params.amount || 50) / 100;
+                                if (p.shaper && p._lastAmount !== amt) {
+                                    p.shaper.curve = makeDistCurve(amt);
+                                    p._lastAmount = amt;
+                                }
+                                p.tone && (p.tone.frequency.value = 2000 + ((l.params.tone || 50) / 100) * 8000);
+                            }
+                        })
                     }
                 });
             }
@@ -2771,29 +2834,25 @@
 
         settings = { ...settings, ...(data.settings || {}) };
 
+        const optimisationChanged = !!settings.optimisation !== lastOptimisation;
+        lastOptimisation = !!settings.optimisation;
+
         if (bypassNode) {
-            const isBp = !!settings.bypass;
-            const t = audioCtx.currentTime;
-
-            // ПРИНУДИТЕЛЬНО восстанавливаем связь, если она была оборвана 
-            // при переключении режимов (sourceGain.disconnect() убивает все связи)
-            try { sourceGain.connect(bypassNode); } catch (e) { }
-
-            // Плавно и безопасно переключаем прямую дорожку
+            const isBp = !!settings.bypass, t = audioCtx.currentTime;
+            try { sourceGain.connect(bypassNode) } catch (e) { }
             bypassNode.gain.cancelScheduledValues(t);
             bypassNode.gain.setValueAtTime(bypassNode.gain.value, t);
-            bypassNode.gain.linearRampToValueAtTime(isBp ? 1 : 0, t + 0.01);
+            bypassNode.gain.linearRampToValueAtTime(isBp ? 1 : 0, t + .01);
 
-            // Плавно и безопасно глушим цепь эффектов
-            const tNode = overlayMode ? globalMergeNode : gainNode;
-            if (tNode) {
-                tNode.gain.cancelScheduledValues(t);
-                tNode.gain.setValueAtTime(tNode.gain.value, t);
-                tNode.gain.linearRampToValueAtTime(isBp ? 0 : 1, t + 0.01);
+            if (isBp) {
+                const tNode = overlayMode ? globalMergeNode : gainNode;
+                if (tNode) {
+                    tNode.gain.cancelScheduledValues(t);
+                    tNode.gain.setValueAtTime(tNode.gain.value, t);
+                    tNode.gain.linearRampToValueAtTime(0, t + .01);
+                }
+                return;
             }
-
-            // Если включен bypass, прерываем обработку, чтобы не тратить CPU
-            if (isBp) return;
         }
 
         let isNowBlacklisted = false;
@@ -2815,8 +2874,6 @@
             siteIsBlacklisted = isNowBlacklisted;
 
             if (siteIsBlacklisted) {
-                // --- САЙТ В БЛЭКЛИСТЕ: Полный сброс ---
-                // Bypass: disconnect processing chain from destination, connect sourceGain directly to destination
                 if (overlayMode) {
                     try { globalLimiterNode?.disconnect() } catch (e) { }
                     try { sourceGain?.connect(audioCtx.destination) } catch (e) { }
@@ -2824,7 +2881,7 @@
                     try { limiterNode?.disconnect() } catch (e) { }
                     try { sourceGain?.connect(audioCtx.destination) } catch (e) { }
                 }
-                // Reset media element playback rates
+
                 connectedMediaElements.forEach(el => {
                     try {
                         el.playbackRate = 1;
@@ -2834,7 +2891,6 @@
                         el.__lastRateSetByUs = Date.now();
                     } catch (e) { }
                 });
-                // Bypass Howler
 
                 if (usingHowler) {
                     routeHowler(!0);
@@ -2854,34 +2910,18 @@
                     }
                 }
             } else {
-                // Remove bypass: disconnect sourceGain from destination (chain will be reconnected below)
                 try { sourceGain?.disconnect(audioCtx.destination) } catch (e) { }
             }
         }
 
-        // --- ОСНОВНАЯ ЛОГИКА (Выполняется ВСЕГДА, если сайт не в блэклисте) ---
         if (!siteIsBlacklisted) {
-            // Reconnect processing chain to destination (reversing bypass)
-            if (overlayMode) {
-                try { globalLimiterNode?.connect(ensureAnalyser(audioCtx)) } catch (e) { }
-                connectAnalyserToDestination(audioCtx);
-            } else if (limiterNode) {
-                try { limiterNode?.connect(ensureAnalyser(audioCtx)) } catch (e) { }
-                connectAnalyserToDestination(audioCtx);
-            }
-            usingHowler ? syncHowlerSpeed() : connectedMediaElements.forEach(el => applySpeedSettings(el));
-            const mediaElements = Array.from(document.querySelectorAll("audio, video"));
-            for (const el of mediaElements) el.__pitchSource || await connectMediaElement(el);
-            usingHowler && await attachHowler();
-
+            // 1. СНАЧАЛА вычисляем режим и перестраиваем граф, если нужно
             const newOverlayMode = !!(e.data.settings?.overlayEnabled && e.data.overlayPresets && Array.isArray(e.data.overlayPresets) && e.data.overlayPresets.length >= 1);
-
-            // СРАВНИВАЕМ ТОЛЬКО ID ПРЕСЕТОВ, А НЕ ИХ НАСТРОЙКИ!
             const getIds = (presets) => (presets || []).map(p => p.id || p).join(',');
             const newIds = getIds(e.data.overlayPresets);
             const oldIds = getIds(overlayPresetsData);
 
-            const needsRebuild = newOverlayMode !== overlayMode || (newOverlayMode && newIds !== oldIds);
+            const needsRebuild = newOverlayMode !== overlayMode || (newOverlayMode && newIds !== oldIds) || optimisationChanged;
 
             if (needsRebuild) {
                 overlayMode = newOverlayMode;
@@ -2891,18 +2931,16 @@
                 if (overlayMode) {
                     try { limiterNode?.disconnect(); } catch (e) { }
                     try { dolbyOutputNode?.disconnect(); } catch (e) { }
-                    if (overlayMode) {
-                        // Перед переходом в Overlay очищаем обычный режим
-                        disposeNormalModeNodes();
-                        await rebuildGraph();
-                    }
+
+                    // Убиваем normal-процессор, чтобы он не висел параллельно
+                    evictPitchProcessor("normal");
+
+                    disposeNormalModeNodes();
+                    await rebuildGraph();
                 } else {
-                    // ===== ВЫКЛЮЧЕНИЕ OVERLAY – ПОЛНАЯ ОЧИСТКА =====
-                    // 1. Удаляем все параллельные цепи (Overlay)
                     parallelChains.forEach(chain => disposeChain(chain));
                     parallelChains = [];
 
-                    // 2. Отключаем глобальные узлы Overlay
                     const globalNodes = [
                         globalMergeNode, globalCompressorNode, globalStereoPannerNode,
                         globalLimiterNode, globalDolbyInputNode, globalDolbyOutputNode,
@@ -2919,45 +2957,37 @@
                     globalSurroundMerger = null;
                     globalSurroundCenterGain = null;
 
-                    // 3. Отключаем Howler от sourceGain и перенаправляем напрямую в destination
                     if (usingHowler && window.Howler?.masterGain) {
                         try { window.Howler.masterGain.disconnect(sourceGain); } catch (e) { }
                         try { window.Howler.masterGain.connect(audioCtx.destination); } catch (e) { }
-                        howlerAttached = false; // сбрасываем флаг, чтобы при следующем подключении перепривязалось
-                        usingHowler = false;    // временно отключаем флаг использования
+                        howlerAttached = false;
+                        usingHowler = false;
                     }
 
-                    // 4. Очищаем все узлы обычного режима
+                    // Убиваем все overlay-процессоры
+                    for (const key of [...pitchProcessorPool.keys()]) {
+                        if (key.startsWith("overlay:")) evictPitchProcessor(key);
+                    }
+
                     disposeNormalModeNodes();
-
-                    // 5. Отключаем sourceGain от всего
                     try { sourceGain?.disconnect(); } catch (e) { }
-
-                    // 6. Сбрасываем флаги
                     overlayGraphBuilt = false;
 
-                    // 7. Перестраиваем обычный граф
                     if (audioCtx) {
                         await ensurePitchGraph(audioCtx);
-                        // После перестройки обновляем все настройки
                         refreshAllNodes();
                     }
 
-                    // 8. Если Howler был, восстанавливаем его подключение через новый граф
                     if (window.Howler?.masterGain) {
-                        // Переподключаем Howler к новому sourceGain
                         usingHowler = true;
                         howlerAttached = false;
-                        await attachHowler(); // это переподключит Howler к текущему графу
+                        await attachHowler();
                     }
                 }
             } else if (overlayMode) {
-                // Структура пресетов та же, но поменялись значения (двигали ползунки).
-                // Просто обновляем данные в цепочках и применяем легкое обновление.
                 overlayPresetsData = e.data.overlayPresets;
                 parallelChains.forEach((chain, index) => {
                     if (overlayPresetsData[index]) {
-                        // Безопасно извлекаем значения (поддерживаем и старый, и новый формат)
                         chain.settings = overlayPresetsData[index].values || overlayPresetsData[index];
                     }
                 });
@@ -2965,6 +2995,20 @@
             } else {
                 refreshAllNodes();
             }
+
+            // 2. ТОЛЬКО ПОСЛЕ этого подключаем аналайзер и медиа-элементы
+            if (overlayMode) {
+                try { globalLimiterNode?.connect(ensureAnalyser(audioCtx)) } catch (e) { }
+                connectAnalyserToDestination(audioCtx);
+            } else if (limiterNode) {
+                try { limiterNode?.connect(ensureAnalyser(audioCtx)) } catch (e) { }
+                connectAnalyserToDestination(audioCtx);
+            }
+
+            usingHowler ? syncHowlerSpeed() : connectedMediaElements.forEach(el => applySpeedSettings(el));
+            const mediaElements = Array.from(document.querySelectorAll("audio, video"));
+            for (const el of mediaElements) el.__pitchSource || await connectMediaElement(el);
+            usingHowler && await attachHowler();
         }
     });
 
@@ -3050,7 +3094,11 @@
         })();
 
     (function probeHowler() {
-        howlerProbeTimer || (howlerProbeTimer = setInterval(() => {
+        if (howlerProbeTimer) return;
+        let attempts = 0;
+        const maxAttempts = 120; // ~30 сек
+        howlerProbeTimer = setInterval(() => {
+            attempts++;
             if (window.Howler && window.Howl) {
                 function hookHowler() {
                     if (window.__pitchHowlerHooked) return;
@@ -3074,8 +3122,11 @@
                 howlerProbeTimer = null;
                 hookHowler();
                 if (!siteIsBlacklisted) attachHowler().catch(e => { });
+            } else if (attempts >= maxAttempts) {
+                clearInterval(howlerProbeTimer);
+                howlerProbeTimer = null;
             }
-        }, 250));
+        }, 250);
     })();
 
     (function startSpeedEnforcer() {
