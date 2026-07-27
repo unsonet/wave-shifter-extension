@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Wave Shifter - Audio Effects Suite (Pitch, EQ, Reverb, Volume Boost, Speed)",
+  "name": "Wave Shifter - Audio Effects Suite for Music & Video",
   "short_name": "Wave Shifter",
   "description": "Real-time browser audio processing with pitch shifting, EQ, reverb, dynamics, surround, speed control and more.",
   "author": "Unsonet <https://github.com/Unsonet>",
@@ -47,6 +47,7 @@
         "__pitch_shifter_worklet.js",
         "src/js/audio-effects-worklet.js",
         "src/js/pitch-correlator-processor.js", 
+        "src/js/phase-vocoder-processor.js",
         "src/js/SignalsmithStretch.min.js",
         "src/sounds/*.wav"
       ],

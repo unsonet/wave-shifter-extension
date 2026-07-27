@@ -20,12 +20,14 @@
 
   const workletUrl = chrome.runtime.getURL("__pitch_shifter_worklet.js");
   const fallbackWorkletUrl = chrome.runtime.getURL("src/js/pitch-correlator-processor.js");
+  const phaseVocoderUrl = chrome.runtime.getURL("src/js/phase-vocoder-processor.js");
   const hookUrl = chrome.runtime.getURL("page-hook.js");
   const soundsBaseUrl = chrome.runtime.getURL("src/sounds/");
 
   window.__pitchShifterExtensionConfig = {
     workletUrl,
     fallbackWorkletUrl,
+    phaseVocoderUrl,
     soundsBaseUrl,
     initialSettings: pitchSettings
   };
@@ -40,6 +42,7 @@
     }
     meta.dataset.workletUrl = workletUrl;
     meta.dataset.fallbackWorkletUrl = fallbackWorkletUrl;
+    meta.dataset.phaseVocoderUrl = phaseVocoderUrl;
     meta.dataset.soundsBaseUrl = soundsBaseUrl;
     meta.dataset.initialSettings = JSON.stringify(pitchSettings);
   } catch (e) {

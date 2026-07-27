@@ -486,24 +486,24 @@ details>.control:last-child {
   padding: 2px 0;
 }
 
-.controls .button-row {
+.button-row {
   width: 100%;
   display: flex;
   gap: 8px;
   flex-direction: row;
 }
 
-.controls .button-row.middle {
+.button-row.middle {
   place-content: space-between;
 }
 
-.controls .button-row.middle .row {
+.button-row.middle .row {
   /* min-width: 70px; */
   margin-top: 0;
 }
 
 
-.controls .button-row button {
+.button-row button {
   padding-left: 0px;
   padding-right: 0px;
 }

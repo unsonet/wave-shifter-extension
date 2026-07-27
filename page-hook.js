@@ -2,6 +2,7 @@
     if (window.__pitchChangerPatched) return;
     window.__pitchChangerPatched = true;
 
+
     // --- OVERLAY ARCHITECTURE ---
     let overlayMode = false;
     let overlayPresetsData = null;
@@ -21,6 +22,7 @@
     let rebuildCancelToken = 0;
     let pitchProcessorPool = new Map();
     const EQ_DB_RANGE = 10;
+    const USE_PHASE_VOCODER = true;
 
     // ИНИЦИАЛИЗАЦИЯ ОВЕРЛЕЯ ПРИ ЗАГРУЗКЕ (Решает проблему Race Condition)
     try {
@@ -90,42 +92,83 @@
 
     function evictPitchProcessor(slotKey) {
         const entry = pitchProcessorPool.get(slotKey);
-        if (!entry) return;
-        try { entry.pitchNode?.port?.close?.() } catch (e) { }
-        try { entry.pitchNode?.disconnect() } catch (e) { }
-        if (entry.correlatorNodes) {
-            try { entry.correlatorNodes.oscillators.forEach(o => { try { o.stop() } catch (e) { } try { o.disconnect() } catch (e) { } }) } catch (e) { }
+        if (entry) {
+            if ("signalsmith" === entry.procType && entry.pitchNode) {
+                try {
+                    entry.pitchNode.port.postMessage([null, "start", {
+                        active: !1,
+                        semitones: 0,
+                        tonalityHz: 8800
+                    }])
+                } catch (e) { }
+            }
+            try {
+                entry.pitchNode?.port?.close?.()
+            } catch (e) { }
+            try {
+                entry.pitchNode?.disconnect()
+            } catch (e) { }
+            if (entry.correlatorNodes) {
+                try { entry.correlatorNodes.oscillators.forEach(o => { try { o.stop() } catch (e) { } try { o.disconnect() } catch (e) { } }) } catch (e) { }
+            }
+            pitchProcessorPool.delete(slotKey);
         }
-        pitchProcessorPool.delete(slotKey);
     }
 
-    async function getOrCreatePitchProcessor(slotKey, ctx, useSignalsmith) {
+    async function getOrCreatePitchProcessor(slotKey, ctx, preferredType) {
         const cached = pitchProcessorPool.get(slotKey);
-        const cachedMatches = cached && cached.ctx === ctx &&
-            (useSignalsmith ? cached.procType === "signalsmith" : cached.procType !== "signalsmith");
-        if (cachedMatches) return cached;
-        if (cached) evictPitchProcessor(slotKey);
-
-        let pNode = null, corrNodes = null, pType = null;
-
-        if (useSignalsmith) {
+        if (cached && cached.ctx === ctx && cached.procType === preferredType) {
+            return cached;
+        }
+        cached && evictPitchProcessor(slotKey);
+        let pNode = null,
+            corrNodes = null,
+            pType = null;
+        if ("signalsmith" === preferredType) {
             try {
                 pNode = await new Promise(async (resolve, reject) => {
-                    try { await ctx.audioWorklet.addModule(workletUrl) } catch (e) { }
-                    const n = new AudioWorkletNode(ctx, "signalsmith-stretch", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2] });
-                    const timeout = setTimeout(() => reject(new Error("Timeout")), 1500);
-                    n.port.onmessage = e => { e?.data && "ready" === e.data[0] && (clearTimeout(timeout), resolve(n)) };
-                });
-                pType = "signalsmith";
+                    try {
+                        await ctx.audioWorklet.addModule(workletUrl)
+                    } catch (e) { }
+                    const n = new AudioWorkletNode(ctx, "signalsmith-stretch", {
+                        numberOfInputs: 1,
+                        numberOfOutputs: 1,
+                        outputChannelCount: [2]
+                    }),
+                        timeout = setTimeout(() => reject(new Error("Timeout")), 1500);
+                    n.port.onmessage = e => {
+                        e?.data && "ready" === e.data[0] && (clearTimeout(timeout), resolve(n))
+                    }
+                }), pType = "signalsmith"
             } catch (e) {
-                console.warn(`[WS] Slot ${slotKey}: Signalsmith failed, using Correlator`);
+                console.warn(`[WS] Slot ${slotKey}: Signalsmith failed`)
             }
         }
-
+        if (!pNode && "phase-vocoder" === preferredType) {
+            try {
+                await ctx.audioWorklet.addModule(phaseVocoderUrl), pNode = new AudioWorkletNode(ctx, "phase-vocoder-processor", {
+                    numberOfInputs: 1,
+                    numberOfOutputs: 1,
+                    outputChannelCount: [2],
+                    parameterData: {
+                        pitchFactor: 1
+                    }
+                }), pType = "phase-vocoder"
+            } catch (e) {
+                console.warn(`[WS] Slot ${slotKey}: Phase vocoder failed`, e)
+            }
+        }
         if (!pNode) {
             try {
-                try { await ctx.audioWorklet.addModule(fallbackWorkletUrl) } catch (e) { }
-                pNode = new AudioWorkletNode(ctx, "pitch-correlator", { numberOfInputs: 2, numberOfOutputs: 1, channelCount: 2, outputChannelCount: [2] });
+                try {
+                    await ctx.audioWorklet.addModule(fallbackWorkletUrl)
+                } catch (e) { }
+                pNode = new AudioWorkletNode(ctx, "pitch-correlator", {
+                    numberOfInputs: 2,
+                    numberOfOutputs: 1,
+                    channelCount: 2,
+                    outputChannelCount: [2]
+                });
                 const cGain = (val, dest) => {
                     const g = ctx.createGain();
                     "number" == typeof val ? g.gain.value = val : (val.connect(g.gain), g.gain.value = 0);
@@ -299,7 +342,7 @@
 
                 try {
                     const pSet = chainsToBuild[i].values || chainsToBuild[i];
-                    const useSignalsmith = !isWasmBlocked && !settings.optimisation && i < overlayConfig.MAX_SIGNALSMITH_CHAINS;
+                    const preferredType = settings.optimisation ? "correlator" : isWasmBlocked ? "phase-vocoder" : i < overlayConfig.MAX_SIGNALSMITH_CHAINS ? "signalsmith" : "correlator";
                     const chainEqs = EQ_BANDS.map(band => {
                         const f = audioCtx.createBiquadFilter();
                         f.type = band.type;
@@ -420,17 +463,15 @@
                     chainGain.connect(globalMergeNode);
 
                     // Pitch shifting (без изменений)
-                    const {
-                        pitchNode,
-                        correlatorNodes,
-                        procType
-                    } = await getOrCreatePitchProcessor(`overlay:${i}`, audioCtx, useSignalsmith);
+                    const { pitchNode, correlatorNodes, procType } = await getOrCreatePitchProcessor(`overlay:${i}`, audioCtx, preferredType);
 
 
-                    if ("signalsmith" === procType) {
-                        try { pitchNode.disconnect() } catch (e) { } // рвём ВСЕ старые выходы переиспользуемого узла перед новым подключением
-                        sourceGain.connect(pitchNode);
-                        pitchNode.connect(chainEqs[0]);
+                    if ("signalsmith" === procType || "phase-vocoder" === procType) {
+                        try {
+                            pitchNode.disconnect()
+                        } catch (e) { }
+                        sourceGain.connect(pitchNode),
+                            pitchNode.connect(chainEqs[0])
                     } else if ("correlator" === procType && correlatorNodes) {
                         try { pitchNode.disconnect() } catch (e) { }
                         sourceGain.connect(correlatorNodes.delay1);
@@ -528,7 +569,8 @@
             chain.eqs = null;
         }
 
-        try { chain.pitchNode?.disconnect() } catch (e) { }
+        /* pitchNode из пула — не трогаем, evictPitchProcessor управляет его жизненным циклом */
+        // try { chain.pitchNode?.disconnect() } catch (e) { }
         // 4. Sub (GainNode)
         try { chain.subL?.disconnect(); } catch (e) { }
         try { chain.subR?.disconnect(); } catch (e) { }
@@ -740,16 +782,7 @@
 
         // 5. Отключаем pitchNode (если есть)
         try { pitchNode?.disconnect() } catch (e) { }
-        pitchNode = null;
-        correlatorNodes && (correlatorNodes.oscillators.forEach(o => {
-            try {
-                o.stop()
-            } catch (e) { }
-            try {
-                o.disconnect()
-            } catch (e) { }
-        }));
-        correlatorNodes = null;
+        pitchNode = null, correlatorNodes = null;
         // 6. Отключаем все основные узлы обычного режима
         const nodes = [
             gainNode, limiterNode, stereoSplitter, stereoMerger, stereo3dChain, subLeftGain, subRightGain,
@@ -824,22 +857,37 @@
             if (chain.pitchNode && "signalsmith" === chain.procType) {
                 const newBlock = pSet.windowSizeMilliseconds,
                     newSmart = !pSet.applySmartProcessing;
-                chain.lastBlockMs === newBlock && chain.lastSmart === newSmart || (chain.pitchNode.port.postMessage([null, "configure", {
-                    blockMs: newBlock,
-                    splitComputation: newSmart
-                }]), chain.lastBlockMs = newBlock, chain.lastSmart = newSmart);
-                const finalSemitones = pSet.pitchValueSemitones + pSet.pitchValueCents / 100 + (!usingHowler || !settings.preservePitch || globalRate <= 0 ? 0 : -12 * Math.log2(globalRate));
+                chain.lastBlockMs === newBlock && chain.lastSmart === newSmart || (
+                    chain.pitchNode.port.postMessage([null, "configure", {
+                        blockMs: newBlock,
+                        splitComputation: newSmart
+                    }]),
+                    chain.lastBlockMs = newBlock,
+                    chain.lastSmart = newSmart
+                );
+                const finalSemitones = siteIsBlacklisted ? 0 : pSet.pitchValueSemitones + pSet.pitchValueCents / 100 + (!usingHowler || !settings.preservePitch || globalRate <= 0 ? 0 : -12 * Math.log2(globalRate));
                 chain.pitchNode.port.postMessage([null, "start", {
-                    active: !0,
+                    active: !siteIsBlacklisted,
                     semitones: finalSemitones,
                     tonalityHz: 8800
                 }])
-            } else if (chain.procType === "correlator" && chain.correlatorNodes) {
-                const finalSemitones = pSet.pitchValueSemitones + pSet.pitchValueCents / 100 + (!usingHowler || !settings.preservePitch || globalRate <= 0 ? 0 : -12 * Math.log2(globalRate));
-                const factor = Math.pow(2, finalSemitones / 12), 
-                windowSec=correlatorWindowSec(pSet.windowSizeMilliseconds);
-                if (factor === 1) { chain.correlatorNodes.freqSrc.offset.value = 0; chain.correlatorNodes.wss.offset.value = 0; }
-                else { chain.correlatorNodes.freqSrc.offset.value = 1.17915 / windowSec * (1 - factor); chain.correlatorNodes.wss.offset.value = windowSec; }
+            } else if ("phase-vocoder" === chain.procType && chain.pitchNode) {
+                const finalSemitones = siteIsBlacklisted ? 0 : pSet.pitchValueSemitones + pSet.pitchValueCents / 100 + (!usingHowler || !settings.preservePitch || globalRate <= 0 ? 0 : -12 * Math.log2(globalRate)),
+                    factor = siteIsBlacklisted ? 1 : Math.pow(2, finalSemitones / 12);
+                chain.pitchNode.parameters.get("pitchFactor").setTargetAtTime(factor, audioCtx.currentTime, .01)
+            }
+
+            else if ("correlator" === chain.procType && chain.correlatorNodes) {
+                const finalSemitones = siteIsBlacklisted ? 0 : pSet.pitchValueSemitones + pSet.pitchValueCents / 100 + (!usingHowler || !settings.preservePitch || globalRate <= 0 ? 0 : -12 * Math.log2(globalRate)),
+                    factor = siteIsBlacklisted ? 1 : Math.pow(2, finalSemitones * CORRELATOR_SEMITONES_SCALE / 12),
+                    windowSec = correlatorWindowSec(pSet.windowSizeMilliseconds);
+                1 === factor ? (
+                    chain.correlatorNodes.freqSrc.offset.value = 0,
+                    chain.correlatorNodes.wss.offset.value = 0
+                ) : (
+                    chain.correlatorNodes.freqSrc.offset.value = 1.17915 / windowSec * (1 - factor),
+                    chain.correlatorNodes.wss.offset.value = windowSec
+                )
             }
             const gains = pSet.eqGains || Array(10).fill(50); chain.eqs.forEach((f, i) => { f.gain.value = (gains[i] - 50) * EQ_DB_RANGE / 50 });
             const centerCancelVal = -(pSet.centerCancel || 0) / 100;
@@ -1102,6 +1150,14 @@
         return url;
     })();
 
+    const phaseVocoderUrl = (() => {
+        let url = window.__pitchShifterExtensionConfig?.phaseVocoderUrl;
+        if (!url) try {
+            url = document.getElementById("__pitchShifterCfg")?.dataset?.phaseVocoderUrl || ""
+        } catch (e) { }
+        return url
+    })();
+
     const soundsBaseUrl = (() => {
         let url = window.__pitchShifterExtensionConfig?.soundsBaseUrl;
         if (!url) try { url = document.getElementById("__pitchShifterCfg")?.dataset?.soundsBaseUrl || "" } catch (e) { }
@@ -1134,12 +1190,13 @@
         { frequency: 16000, type: "highshelf" }
     ];
 
-// JS-корректор использует windowSizeMilliseconds как глубину свипа задержки — большие
- // значения (типичные 120мс из UI) растягивают цикл кроссфейда на секунды и делают
- // хорус хорошо слышимым. У Signalsmith то же число значит другое (размер FFT-блока)
- // и не режется. Для корректора искусственно ограничиваем потолок.
- const CORRELATOR_MAX_WINDOW_MS=30;
- function correlatorWindowSec(uiMs){return Math.min(uiMs||120,CORRELATOR_MAX_WINDOW_MS)/1e3}
+    // JS-корректор использует windowSizeMilliseconds как глубину свипа задержки — большие
+    // значения (типичные 120мс из UI) растягивают цикл кроссфейда на секунды и делают
+    // хорус хорошо слышимым. У Signalsmith то же число значит другое (размер FFT-блока)
+    // и не режется. Для корректора искусственно ограничиваем потолок.
+    const CORRELATOR_MAX_WINDOW_MS = 30;
+    const CORRELATOR_SEMITONES_SCALE = 0.55;
+    function correlatorWindowSec(uiMs) { return Math.min(uiMs || 120, CORRELATOR_MAX_WINDOW_MS) / 1e3 }
 
     let audioCtx = null;
     let pitchNode = null;
@@ -1538,16 +1595,18 @@
             if (token !== rebuildCancelToken) { disposeNormalModeNodes(); return }
             if (isWasmBlocked) console.log("%c[WS] WebAssembly is restricted by CSP. Using fallback processor.", "color: #f0ad4e; font-weight: bold;");
 
-            const useSignalsmithNormal = !isWasmBlocked && !settings.optimisation;
-            const { pitchNode: pNode, correlatorNodes: corrNodes, procType } = await getOrCreatePitchProcessor("normal", ctx, useSignalsmithNormal);
+            const preferredType = settings.optimisation ? "correlator" : isWasmBlocked ? "phase-vocoder" : "signalsmith";
+            const {
+                pitchNode: pNode,
+                correlatorNodes: corrNodes,
+                procType
+            } = await getOrCreatePitchProcessor("normal", ctx, preferredType);
             if (token !== rebuildCancelToken) { try { pNode?.disconnect() } catch (e) { } disposeNormalModeNodes(); return }
             if (pNode) {
                 pitchNode = pNode;
                 correlatorNodes = "correlator" === procType ? corrNodes : null;
                 activeProcessorType = procType;
-                "signalsmith" === procType && sourceGain.connect(pitchNode);
-                "correlator" === procType && (sourceGain.connect(correlatorNodes.delay1), sourceGain.connect(correlatorNodes.delay2));
-                pitchNode.connect(eqFilters[0]);
+                ("signalsmith" === procType || "phase-vocoder" === procType) && sourceGain.connect(pitchNode), "correlator" === procType && (sourceGain.connect(correlatorNodes.delay1), sourceGain.connect(correlatorNodes.delay2)), pitchNode.connect(eqFilters[0])
                 isNodeReady = !0;
                 refreshPitchNode(!0)
             } else {
@@ -1672,14 +1731,24 @@
                     pitchNode.port.postMessage([null, "start", { active: !isBlack, semitones: finalSemitones, tonalityHz: 8800 }]);
                 });
             }
-        } else if (activeProcessorType === 'correlator' && correlatorNodes) {
+
+
+        } else if ("phase-vocoder" === activeProcessorType && pitchNode) {
+            const finalSemitones = isBlack ? 0 : settings.pitchValueSemitones + settings.pitchValueCents / 100 + (() => {
+                const rate = calcPlaybackRate();
+                return !usingHowler || !settings.preservePitch || rate <= 0 ? 0 : -12 * Math.log2(rate)
+            })(),
+                factor = Math.pow(2, finalSemitones / 12);
+            pitchNode.parameters.get("pitchFactor").setTargetAtTime(factor, audioCtx.currentTime, .01)
+        }
+        else if (activeProcessorType === 'correlator' && correlatorNodes) {
             const finalSemitones = isBlack ? 0 : (settings.pitchValueSemitones + settings.pitchValueCents / 100 + (() => {
                 const rate = calcPlaybackRate();
                 return !usingHowler || !settings.preservePitch || rate <= 0 ? 0 : -12 * Math.log2(rate);
             })());
 
-            const factor = isBlack ? 1 : Math.pow(2, finalSemitones / 12);
-            const windowSec=correlatorWindowSec(settings.windowSizeMilliseconds);
+            const factor = isBlack ? 1 : Math.pow(2, finalSemitones * CORRELATOR_SEMITONES_SCALE / 12);
+            const windowSec = correlatorWindowSec(settings.windowSizeMilliseconds);
 
             if (factor === 1) {
                 correlatorNodes.freqSrc.offset.value = 0;
@@ -2923,7 +2992,43 @@
 
             const needsRebuild = newOverlayMode !== overlayMode || (newOverlayMode && newIds !== oldIds) || optimisationChanged;
 
-            if (needsRebuild) {
+
+
+            if (optimisationChanged && !overlayMode && !newOverlayMode && audioCtx && isNodeReady) {
+                lastOptimisation = !!settings.optimisation;
+                await (async function swapNormalProcessor() {
+                    if (!audioCtx || !sourceGain || !eqFilters.length) return;
+                    const wb = await isWasmBlockedByCSP(),
+                        pt = settings.optimisation ? "correlator" : wb ? "phase-vocoder" : "signalsmith";
+                    try {
+                        pitchNode?.disconnect()
+                    } catch (e) { }
+                    if (correlatorNodes) {
+                        try {
+                            sourceGain.disconnect(correlatorNodes.delay1)
+                        } catch (e) { }
+                        try {
+                            sourceGain.disconnect(correlatorNodes.delay2)
+                        } catch (e) { }
+                    }
+                    try {
+                        sourceGain.disconnect(pitchNode)
+                    } catch (e) { }
+                    const {
+                        pitchNode: pN,
+                        correlatorNodes: cN,
+                        procType
+                    } = await getOrCreatePitchProcessor("normal", audioCtx, pt);
+                    if (!pN) {
+                        console.error("[WS] swapNormalProcessor failed");
+                        try {
+                            sourceGain.connect(eqFilters[0])
+                        } catch (e) { }
+                        return
+                    }
+                    pitchNode = pN, correlatorNodes = "correlator" === procType ? cN : null, activeProcessorType = procType, "signalsmith" === procType || "phase-vocoder" === procType ? (sourceGain.connect(pitchNode), pitchNode.connect(eqFilters[0])) : "correlator" === procType && correlatorNodes ? (sourceGain.connect(correlatorNodes.delay1), sourceGain.connect(correlatorNodes.delay2), pitchNode.connect(eqFilters[0])) : sourceGain.connect(eqFilters[0]), isNodeReady = !0, refreshPitchNode(!0)
+                })()
+            } else if (needsRebuild) {
                 overlayMode = newOverlayMode;
                 overlayPresetsData = e.data.overlayPresets;
                 if (e.data.overlayConfig) overlayConfig = e.data.overlayConfig;
